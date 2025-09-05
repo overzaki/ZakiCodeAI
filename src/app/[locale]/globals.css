@@ -1,0 +1,122 @@
+html,
+body {
+  max-width: 100vw;
+  overflow-x: hidden;
+  scroll-padding: 100px;
+  scroll-behavior: smooth;
+}
+
+* {
+  box-sizing: border-box;
+  padding: 0;
+  margin: 0;
+  letter-spacing: 1px;
+  /* animation: 500ms linear; */
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+/* scrollbar */
+::-webkit-scrollbar {
+  width: 12px;
+}
+
+::-webkit-scrollbar-track {
+  background: #0d373c;
+  border-radius: 10px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: linear-gradient(45deg, #00db98, #0d373c);
+  border-radius: 10px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(45deg, #0d373c, #00db98);
+}
+
+::-webkit-scrollbar-button {
+  display: none;
+}
+
+/* background green gradients start */
+/* Subtle repeating radial glows along the page */
+:root {
+  --glow-green: rgba(30, 251, 184, 0.08);
+  --glow-cyan: rgba(14, 229, 249, 0.07);
+  --glow-white: rgba(255, 255, 255, 0.03);
+}
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background-image:
+    radial-gradient(40rem 30rem at 8% 12%, var(--glow-green), transparent 60%),
+    radial-gradient(36rem 28rem at 92% 20%, var(--glow-cyan), transparent 60%),
+    radial-gradient(34rem 28rem at 10% 60%, var(--glow-cyan), transparent 65%),
+    radial-gradient(42rem 34rem at 90% 70%, var(--glow-green), transparent 60%),
+    radial-gradient(28rem 24rem at 50% 8%, var(--glow-white), transparent 60%),
+    radial-gradient(28rem 24rem at 50% 92%, var(--glow-white), transparent 60%);
+  background-repeat: repeat-y;
+  background-size: 100% 900px;
+  filter: saturate(120%);
+}
+/* background green gradients end */
+
+.animate-border-color::before {
+  content: "";
+  position: absolute;
+  top: -2px;
+  left: -2px;
+  right: -2px;
+  bottom: -2px;
+  border-radius: 25px;
+  background:
+    conic-gradient(from var(--angle), #1EFBB8, transparent, transparent, transparent, transparent, transparent, transparent, #1EFBB8);
+  animation: spin 3s linear infinite;
+  z-index: 0;
+  filter: blur(1px);
+}
+.animate-border-color::after {
+  content: "";
+  position: absolute;
+  top: -3px;
+  left: -3px;
+  right: -3px;
+  bottom: -3px;
+  border-radius: 25px;
+  background:
+    conic-gradient(from var(--angle), #1EFBB8, transparent, transparent, transparent, transparent, transparent, transparent, #1EFBB8);
+  animation: spin 3s linear infinite;
+  z-index: 1;
+  filter: blur(15px);
+  opacity: .8;
+}
+.animate-border-color > div {
+  position: relative;
+  z-index: 2; 
+  background-color: #0b3a42;
+  border-radius: 25px;
+  display: flex;
+  flex-direction: column;
+}
+
+@property --angle {
+  syntax: '<angle>';
+  initial-value: 0deg;
+  inherits: false;
+}
+
+@keyframes spin {
+  from {
+    --angle: 0deg;
+  }
+  to {
+    --angle: 360deg;
+  }
+}
