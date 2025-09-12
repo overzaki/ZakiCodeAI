@@ -287,11 +287,25 @@ const CodeView: React.FC<CodeViewProps> = ({
   // --- GitHub Connect & Push (Client) ---
   const search = useSearchParams();
   const [installationId, setInstallationId] = React.useState('');
+  const [githubAccount, setGithubAccount] = React.useState('');
+  const [isGithubConnected, setIsGithubConnected] = React.useState(false);
+  
   React.useEffect(() => {
     const fromUrl = search.get('installation_id');
     const fromStore =
       typeof window !== 'undefined' ? localStorage.getItem('gh_installation_id') : '';
-    setInstallationId(fromUrl || fromStore || '');
+    const accountLogin = 
+      typeof window !== 'undefined' ? localStorage.getItem('gh_account_login') : '';
+    
+    const finalInstallationId = fromUrl || fromStore || '';
+    setInstallationId(finalInstallationId);
+    setGithubAccount(accountLogin || '');
+    setIsGithubConnected(!!finalInstallationId);
+    
+    // Save to localStorage if coming from URL
+    if (fromUrl && typeof window !== 'undefined') {
+      localStorage.setItem('gh_installation_id', fromUrl);
+    }
   }, [search]);
 
   const [repoFullName, setRepoFullName] = React.useState('youruser/yourrepo');
@@ -314,8 +328,23 @@ const CodeView: React.FC<CodeViewProps> = ({
   }, [generatedCode]);
 
   function connectGithub() {
-    const slug = process.env.NEXT_PUBLIC_GITHUB_APP_SLUG!;
-    window.location.href = `https://github.com/apps/${slug}/installations/new`;
+    const slug = process.env.NEXT_PUBLIC_GITHUB_APP_SLUG || 'zakicode-app';
+    window.open(`https://github.com/apps/${slug}/installations/new`, '_blank');
+  }
+
+  function disconnectGithub() {
+    if (typeof window !== 'undefined') {
+      localStorage.removeItem('gh_installation_id');
+      localStorage.removeItem('gh_account_login');
+      localStorage.removeItem('gh_account_type');
+      localStorage.removeItem('gh_connected_at');
+      localStorage.removeItem('gh_default_repo');
+    }
+    setInstallationId('');
+    setGithubAccount('');
+    setIsGithubConnected(false);
+    setRepoFullName('youruser/yourrepo');
+    alert('GitHub disconnected successfully!');
   }
 
   async function commitToGithub() {
@@ -1076,13 +1105,49 @@ const CodeView: React.FC<CodeViewProps> = ({
 
           {/* GitHub actions */}
           <Box sx={{ p: 1, borderBottom: '1px solid rgba(255,255,255,0.1)', display: 'flex', gap: 1, alignItems: 'center' }}>
-            <Button variant="outlined" onClick={connectGithub} startIcon={<Iconify icon="mdi:github" />}>
-              Connect GitHub
-            </Button>
-            <TextField size="small" label="owner/repo" value={repoFullName} onChange={(e) => setRepoFullName(e.target.value)} sx={{ minWidth: 260 }} />
-            <Button variant="contained" onClick={commitToGithub} startIcon={<Iconify icon="mdi:upload" />}>
-              Push code
-            </Button>
+            {!isGithubConnected ? (
+              <Button variant="outlined" onClick={connectGithub} startIcon={<Iconify icon="mdi:github" />}>
+                Connect GitHub
+              </Button>
+            ) : (
+              <Stack direction="row" spacing={1} alignItems="center">
+                <Chip 
+                  icon={<Iconify icon="mdi:github" />}
+                  label={githubAccount ? `Connected: ${githubAccount}` : `Connected (ID: ${installationId.slice(-6)})`}
+                  color="success"
+                  variant="outlined"
+                  onDelete={disconnectGithub}
+                  deleteIcon={<Iconify icon="mdi:close" />}
+                  sx={{ 
+                    '& .MuiChip-deleteIcon': { 
+                      ml: 0.5,
+                      '&:hover': { color: 'error.main' }
+                    }
+                  }}
+                />
+              </Stack>
+            )}
+            
+            {isGithubConnected && (
+              <>
+                <TextField 
+                  size="small" 
+                  label="owner/repo" 
+                  value={repoFullName} 
+                  onChange={(e) => setRepoFullName(e.target.value)} 
+                  sx={{ minWidth: 260 }} 
+                />
+                <Button 
+                  variant="contained" 
+                  onClick={commitToGithub} 
+                  startIcon={<Iconify icon="mdi:upload" />}
+                  disabled={!installationId}
+                >
+                  Push code
+                </Button>
+              </>
+            )}
+            
             <Box sx={{ flex: 1 }} />
             {project?.name && <Chip size="small" variant="outlined" label={`Project: ${project.name}`} />}
             {projectId && <Chip size="small" label={`ID: ${projectId}`} />}

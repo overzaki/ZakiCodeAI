@@ -3,7 +3,7 @@
 import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import {
   Box, Typography, Table, TableBody, TableCell, TableContainer,
-  TableHead, TableRow, Paper, Stack, Card, LinearProgress, Alert
+  TableHead, TableRow, Paper, Stack, Card, LinearProgress, Alert, CircularProgress
 } from '@mui/material';
 import {
   useNodesState, useEdgesState, addEdge, Connection, Edge, Node
@@ -118,17 +118,35 @@ export default function BackendStructurePage({ onBackToERD, projectId }: Backend
     action: 'Edit'
   }));
 
+  // Show full page loading state
+  if (loading) {
+    return (
+      <Box sx={{ p: 3, height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <Stack spacing={3} alignItems="center">
+          <CircularProgress size={40} />
+          <Typography variant="h6" sx={{ color: 'text.secondary' }}>
+            Loading backend structure...
+          </Typography>
+          {projectId && (
+            <Typography variant="body2" sx={{ color: 'text.secondary' }}>
+              Project: {projectId.slice(0, 8)}...
+            </Typography>
+          )}
+        </Stack>
+      </Box>
+    );
+  }
+
   return (
     <Box sx={{ height: '100%', overflowY: 'auto', overflowX: 'hidden', p: 1, gap: 1 }}>
       <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 1 }}>
         <Stack direction="row" alignItems="center" spacing={1}>
-          <Iconify icon="eva:arrow-back-fill" onClick={onBackToERD} sx={{ cursor: 'pointer', mr: 1 }} />
+          {/* <Iconify icon="eva:arrow-back-fill" onClick={onBackToERD} sx={{ cursor: 'pointer', mr: 1 }} /> */}
           <Typography variant="h6">{t('title')}</Typography>
         </Stack>
       </Stack>
 
-      {/* حالة التحميل/الخطأ */}
-      {loading && <LinearProgress sx={{ mb: 1 }} />}
+      {/* حالة الخطأ */}
       {err && <Alert severity="error" sx={{ mb: 1 }}>{err}</Alert>}
 
       {/* المخطط */}

@@ -57,6 +57,8 @@ interface EditorState {
   // Navigation state
   currentView: 'main' | 'erd' | 'frontend' | 'backend';
   projectId: string | null;
+  // New project creation flag
+  isCreatingNewProject: boolean;
 }
 
 // Load initial state from localStorage if available
@@ -88,6 +90,7 @@ const loadInitialState = (): EditorState => {
           // Navigation state
           currentView: savedJson?.currentView || 'main',
           projectId: savedJson?.projectId || null,
+          isCreatingNewProject: savedJson?.isCreatingNewProject || false,
         };
       }
     } catch (error) {
@@ -116,6 +119,7 @@ const loadInitialState = (): EditorState => {
     // Navigation state
     currentView: 'main',
     projectId: null,
+    isCreatingNewProject: false,
   };
 };
 
@@ -154,11 +158,41 @@ const editorSlice = createSlice({
       saveToLocalStorage(state);
     },
     updateFrontendPages: (state, action: PayloadAction<IPageData[]>) => {
+      // Ensure frontendStructure exists
+      if (!state.frontendStructure) {
+        state.frontendStructure = {
+          pages: [],
+          nodes: [],
+          edges: [],
+          isGenerated: false,
+        };
+      }
+      
+      console.log('Redux updateFrontendPages: Updating with pages:', action.payload.length);
       state.frontendStructure.pages = action.payload;
       saveToLocalStorage(state);
     },
     addFrontendPage: (state, action: PayloadAction<IPageData>) => {
+      // Ensure frontendStructure and pages array exist
+      if (!state.frontendStructure) {
+        state.frontendStructure = {
+          pages: [],
+          nodes: [],
+          edges: [],
+          isGenerated: false,
+        };
+      }
+      if (!state.frontendStructure.pages) {
+        state.frontendStructure.pages = [];
+      }
+      
+      console.log('Redux addFrontendPage: Adding page:', action.payload);
+      console.log('Redux addFrontendPage: Current pages count:', state.frontendStructure.pages.length);
+      
       state.frontendStructure.pages.push(action.payload);
+      
+      console.log('Redux addFrontendPage: New pages count:', state.frontendStructure.pages.length);
+      
       saveToLocalStorage(state);
     },
     updateFrontendPage: (
@@ -395,6 +429,10 @@ const editorSlice = createSlice({
       state.projectId = action.payload;
       saveToLocalStorage(state);
     },
+    setIsCreatingNewProject: (state, action: PayloadAction<boolean>) => {
+      state.isCreatingNewProject = action.payload;
+      saveToLocalStorage(state);
+    },
     navigateToView: (
       state,
       action: PayloadAction<{
@@ -431,6 +469,7 @@ const editorSlice = createSlice({
       // Clear navigation state
       state.currentView = 'main';
       state.projectId = null;
+      state.isCreatingNewProject = false;
       saveToLocalStorage(state);
     },
   },
@@ -465,6 +504,8 @@ export const selectGeneratedCode = (state: RootState) =>
 // Navigation selectors
 export const selectCurrentView = (state: RootState) => state.editor.currentView;
 export const selectProjectId = (state: RootState) => state.editor.projectId;
+export const selectIsCreatingNewProject = (state: RootState) =>
+  state.editor.isCreatingNewProject;
 
 export const {
   setMessage,
@@ -489,6 +530,7 @@ export const {
   setGeneratedCode,
   setCurrentView,
   setProjectId,
+  setIsCreatingNewProject,
   navigateToView,
   clearEditor,
 } = editorSlice.actions;

@@ -14,11 +14,14 @@ import {
   setCurrentProject,
   setGeneratedPages,
   setGeneratedCode,
+  setFrontendStructure,
   // Navigation selectors and actions
   selectCurrentView,
   selectProjectId,
+  selectIsCreatingNewProject,
   setCurrentView,
   setProjectId,
+  setIsCreatingNewProject,
   navigateToView,
   clearEditor,
 } from '@/redux/slices/editorSlice';
@@ -39,6 +42,7 @@ export const useEditor = () => {
   const generatedCode = useSelector(selectGeneratedCode);
   const currentView = useSelector(selectCurrentView);
   const projectId = useSelector(selectProjectId);
+  const isCreatingNewProject = useSelector(selectIsCreatingNewProject);
 
   // Loading states
   const [isGenerating, setIsGenerating] = React.useState(false);
@@ -109,7 +113,7 @@ export const useEditor = () => {
     }
 
     setIsGenerating(true);
-    
+
     const request = {
       action: 'init',
       platform: selectedCategories[0] || 'website',
@@ -160,12 +164,16 @@ export const useEditor = () => {
     };
 
     try {
-      const response = await fetch('https://overzakiar.app.n8n.cloud/webhook/builder', {        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
+      const response = await fetch(
+        'https://overzakiar.app.n8n.cloud/webhook/builder',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(request),
         },
-        body: JSON.stringify(request),
-      });
+      );
 
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
@@ -195,6 +203,7 @@ export const useEditor = () => {
     generatedCode,
     currentView,
     projectId,
+    isCreatingNewProject,
     isLoading: isGenerating,
     isGeneratingCode,
 
@@ -209,6 +218,11 @@ export const useEditor = () => {
     setGeneratedPages: (data: { projectId: string; pages: any[] }) =>
       dispatch(setGeneratedPages(data)),
     setGeneratedCode: (code: any) => dispatch(setGeneratedCode(code)),
+    setFrontendStructure: (structure: any) =>
+      dispatch(setFrontendStructure(structure)),
+    setProjectId: (id: string | null) => dispatch(setProjectId(id)),
+    setIsCreatingNewProject: (flag: boolean) =>
+      dispatch(setIsCreatingNewProject(flag)),
     clearEditor: () => dispatch(clearEditor()),
 
     // Navigation

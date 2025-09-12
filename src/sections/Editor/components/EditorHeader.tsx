@@ -58,7 +58,7 @@ const EditorHeader: React.FC<EditorHeaderProps> = ({
   const t = useTranslations();
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { selectedCategories } = useEditor();
+  const { selectedCategories, currentView } = useEditor();
 
   // ===== URL type =====
   const currentType: 'website' | 'backend' | 'app' = useMemo(() => {
@@ -66,6 +66,24 @@ const EditorHeader: React.FC<EditorHeaderProps> = ({
     if (urlType === 'website' || urlType === 'backend' || urlType === 'app') return urlType as any;
     return selectedType;
   }, [searchParams, selectedType]);
+
+  // ===== Active type for visual display (based on current view) =====
+  const activeType: 'website' | 'backend' | 'app' = useMemo(() => {
+    // Show active state based on current view
+    if (currentView === 'backend') {
+      return 'backend';
+    } else if (currentView === 'frontend') {
+      // For frontend, check URL to distinguish between website and app
+      const urlType = (searchParams.get('type') || '').toLowerCase();
+      if (urlType === 'app' || urlType === 'mobile') {
+        return 'app';
+      }
+      return 'website';
+    }
+    
+    // For other views (main, erd), use URL type
+    return currentType;
+  }, [currentView, currentType, searchParams]);
 
   // ===== URL project =====
   const urlProjectId = searchParams.get('project') || '';
@@ -243,7 +261,7 @@ const EditorHeader: React.FC<EditorHeaderProps> = ({
     switch (category) {
       case 'website':
         return { key: 'website', label: 'Website' };
-      case 'dashboard':
+      case 'backend':
         return { key: 'backend', label: 'Dashboard' };
       case 'mobile':
         return { key: 'app', label: 'Mobile App' };
@@ -326,7 +344,7 @@ const EditorHeader: React.FC<EditorHeaderProps> = ({
         }}
       >
         {categoryTypes.map((type) => {
-          const isActive = currentType === (type.key as any);
+          const isActive = activeType === (type.key as any);
           return (
             <Chip
               key={type.key}

@@ -1,16 +1,35 @@
 'use client';
 
-import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import React, {
+  useState,
+  useEffect,
+  useRef,
+  useCallback,
+  useMemo,
+} from 'react';
 import {
-  Box, Stack, Typography, IconButton, Button, Avatar, TextField,
-  InputAdornment, Chip, Alert, LinearProgress,
+  Box,
+  Stack,
+  Typography,
+  IconButton,
+  Button,
+  Avatar,
+  TextField,
+  InputAdornment,
+  Chip,
+  Alert,
+  LinearProgress,
 } from '@mui/material';
 import Image from 'next/image';
 import { useDispatch, useSelector } from 'react-redux';
 import { enqueueSnackbar } from 'notistack';
 
 import { RootState } from '@/redux/store/store';
-import { selectChatMessages, addChatMessage, IChatMessage } from '@/redux/slices/editorSlice';
+import {
+  selectChatMessages,
+  addChatMessage,
+  IChatMessage,
+} from '@/redux/slices/editorSlice';
 import { useEditor } from '@/hooks/useEditor';
 import { useTranslations } from 'next-intl';
 import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard';
@@ -22,12 +41,15 @@ import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
 type Database = any;
 
 const isUuid = (v?: string | null) =>
-  !!v && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(v!);
+  !!v &&
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+    v!,
+  );
 
 function computePlatformFlags(selected: string[] | undefined | null) {
   const s = new Set((selected || []).map((x) => String(x).toLowerCase()));
   const website = s.has('website') || s.has('dashboard');
-  const mobile  = s.has('mobile');
+  const mobile = s.has('mobile');
   const backend = s.has('backend') || s.has('api') || s.has('server');
   return { website, mobile, backend };
 }
@@ -39,11 +61,16 @@ interface EditorChatSectionProps {
   onDiscuss?: () => void;
   onSuccessfulGeneration?: (projectId: string) => void;
   onSuccessfulCodeGeneration?: (projectId: string) => void;
+  onLoadingChange?: (isLoading: boolean) => void;
   projectId?: string | null;
   currentView?: string;
 }
 
-const EditorChatSection: React.FC<EditorChatSectionProps> = ({ onTabChange, projectId }) => {
+const EditorChatSection: React.FC<EditorChatSectionProps> = ({
+  onTabChange,
+  onLoadingChange,
+  projectId,
+}) => {
   const t = useTranslations();
   const dispatch = useDispatch();
   const { copy } = useCopyToClipboard();
@@ -54,8 +81,12 @@ const EditorChatSection: React.FC<EditorChatSectionProps> = ({ onTabChange, proj
   const isLoading: boolean = !!editor?.isLoading;
   const setMessage: (v: string) => void = editor?.setMessage ?? (() => {});
   const selectedCategories: string[] = editor?.selectedCategories ?? [];
+  const isCreatingNewProject: boolean = editor?.isCreatingNewProject ?? false;
+  const setIsCreatingNewProject: (flag: boolean) => void =
+    editor?.setIsCreatingNewProject ?? (() => {});
 
-  const chatMessages = useSelector((s: RootState) => selectChatMessages(s)) || [];
+  const chatMessages =
+    useSelector((s: RootState) => selectChatMessages(s)) || [];
 
   const [activeTab, setActiveTab] = useState<'chat' | 'design'>('chat');
   const [saving, setSaving] = useState(false);
@@ -95,12 +126,14 @@ const EditorChatSection: React.FC<EditorChatSectionProps> = ({ onTabChange, proj
       cancelled = true;
       sub?.subscription?.unsubscribe?.();
     };
-  }, [supabase]);
+  }, [supabase, typeof window]);
 
   useEffect(() => {
     if (!userId) return;
 
-    const safeProjectId = isUuid(projectId || '') ? (projectId as string) : null;
+    const safeProjectId = isUuid(projectId || '')
+      ? (projectId as string)
+      : null;
     const convKey = `conv:${safeProjectId || 'global'}`;
 
     const init = async () => {
@@ -153,7 +186,7 @@ const EditorChatSection: React.FC<EditorChatSectionProps> = ({ onTabChange, proj
                 content: row.content,
                 timestamp: row.created_at,
                 name: row.role === 'assistant' ? 'ZakiCode' : 'User',
-              })
+              }),
             );
           });
         }
@@ -171,7 +204,12 @@ const EditorChatSection: React.FC<EditorChatSectionProps> = ({ onTabChange, proj
       .channel(`chat:${conversationId}`)
       .on(
         'postgres_changes',
-        { event: 'INSERT', schema: 'public', table: 'chat_messages', filter: `conversation_id=eq.${conversationId}` },
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'chat_messages',
+          filter: `conversation_id=eq.${conversationId}`,
+        },
         (payload) => {
           const row: any = payload.new;
           const cid = row?.meta?.client_id;
@@ -186,9 +224,9 @@ const EditorChatSection: React.FC<EditorChatSectionProps> = ({ onTabChange, proj
               content: row.content,
               timestamp: row.created_at,
               name: row.role === 'assistant' ? 'ZakiCode' : 'User',
-            })
+            }),
           );
-        }
+        },
       )
       .subscribe();
 
@@ -197,7 +235,28 @@ const EditorChatSection: React.FC<EditorChatSectionProps> = ({ onTabChange, proj
     };
   }, [conversationId, dispatch, supabase]);
 
-  useEffect(() => { scrollToBottom(); }, [chatMessages.length, scrollToBottom]);
+  useEffect(() => {
+    scrollToBottom();
+  }, [chatMessages.length, scrollToBottom]);
+
+  // Auto-send message when creating a new project
+  useEffect(() => {
+    if (
+      isCreatingNewProject &&
+      message?.trim() &&
+      conversationId &&
+      userId &&
+      !saving
+    ) {
+      // Small delay to ensure everything is properly initialized
+      const timer = setTimeout(() => {
+        handleSendMessage();
+        // Clear the flag after sending
+        setIsCreatingNewProject(false);
+      }, 500);
+      return () => clearTimeout(timer);
+    }
+  }, [isCreatingNewProject, conversationId, userId, message, saving]);
 
   const sendToN8n = async (body: any) => {
     const res = await fetch('/api/chat/send', {
@@ -206,82 +265,124 @@ const EditorChatSection: React.FC<EditorChatSectionProps> = ({ onTabChange, proj
       body: JSON.stringify(body),
     });
     if (!res.ok) throw new Error(await res.text());
-    try { return await res.json(); } catch { return {}; }
+    try {
+      return await res.json();
+    } catch {
+      return {};
+    }
   };
 
-  const getPlatformFlags = (): { website: boolean; mobile: boolean; backend: boolean } => {
-    let flags = computePlatformFlags(selectedCategories);
-    if (flags.website || flags.mobile || flags.backend) return flags;
+  // Simple helper to convert API page to Redux format
+  const convertPageToRedux = (apiPage: any) => ({
+    pageName: apiPage.name || 'Untitled',
+    optionalDescription: apiPage.description || '',
+    parentPage: apiPage.parent_page || null,
+    pageType: apiPage.page_type === 'Overview' ? 'home' : 'custom',
+    platform: apiPage.platform || 'website',
+  });
 
-    try {
-      const rid = searchParams?.get('rid');
-      if (typeof window !== 'undefined' && rid) {
-        const raw = localStorage.getItem(`req:${rid}`);
-        if (raw) {
-          const parsed = JSON.parse(raw || '{}');
-          if (Array.isArray(parsed?.selectedCategories)) {
-            flags = computePlatformFlags(parsed.selectedCategories);
-          } else if (parsed?.flags) {
-            return {
-              website: !!parsed.flags.website,
-              mobile: !!parsed.flags.mobile,
-              backend: !!parsed.flags.backend,
-            };
-          }
-        }
-      }
-    } catch { /* ignore */ }
-
-    return flags;
+  // Simple platform detection
+  const getPlatformFlags = () => {
+    const has = (cat: string) => selectedCategories.includes(cat);
+    return {
+      website: has('website') || has('dashboard'),
+      mobile: has('mobile'),
+      backend: has('backend') || has('api') || has('server'),
+    };
   };
 
   const handleSendMessage = async () => {
     if (!message?.trim()) return;
+    // if (!userId || !conversationId) {
+    //   enqueueSnackbar('Please sign in first.', { variant: 'warning' });
+    //   return;
+    // }
 
-    if (!userId || !conversationId) {
-      enqueueSnackbar('Please sign in first.', { variant: 'warning' });
-      return;
-    }
-
-    const client_id =
-      typeof crypto !== 'undefined' && 'randomUUID' in crypto
-        ? crypto.randomUUID()
-        : `${Date.now()}-${Math.random()}`;
-
+    // Add user message to chat
     const userMessage: IChatMessage = {
-      id: `local-${client_id}`,
+      id: `user-${Date.now()}`,
       type: 'user',
       content: message.trim(),
       timestamp: new Date().toISOString(),
       name: 'User',
     };
     dispatch(addChatMessage(userMessage));
-    pendingClientIds.current.add(client_id);
 
     setMessage('');
     setSaving(true);
+    onLoadingChange?.(true);
     setDbError(null);
 
     try {
       const { website, mobile, backend } = getPlatformFlags();
-
-      // ✅ هنا التغيير: نرسل action='init'
-      await sendToN8n({
+      const response = await sendToN8n({
         action: 'init',
         prompt: userMessage.content,
         conversation_id: conversationId,
         user_id: userId,
         project_id: isUuid(projectId || '') ? projectId : null,
-        client_id,
+        autoErd: true,
+        client_id: `client-${Date.now()}`,
         website,
         mobile,
         backend,
       });
+      // Handle successful response
+      console.log('API Response:', response);
+      if (!response) return;
+
+      const newProjectId = response.projectId || response.erd?.projectId;
+      if (!newProjectId) {
+        enqueueSnackbar(t('No project ID received'), { variant: 'error' });
+        return;
+      }
+      console.log(11111);
+
+      // Update project ID
+      editor.setProjectId(newProjectId);
+      console.log(22222);
+
+      // Add AI messages to Redux
+      const addAIMessage = (content: string) => {
+        dispatch(
+          addChatMessage({
+            id: `ai-${Date.now()}-${Math.random()}`,
+            type: 'ai',
+            content,
+            timestamp: new Date().toISOString(),
+            name: 'ZakiCode',
+          }),
+        );
+      };
+
+      if (response.erd?.pre_chat) addAIMessage(response.erd.pre_chat);
+      if (response.erd?.chat) addAIMessage(response.erd.chat);
+
+      // Save pages to Redux
+      if (response.erd?.pages?.length) {
+        console.log(8);
+        console.log('Saving pages to Redux:', response.erd.pages);
+        const convertedPages = response.erd.pages.map(convertPageToRedux);
+        console.log('Converted pages:', convertedPages);
+        editor.setFrontendStructure({
+          pages: convertedPages,
+          nodes: [],
+          edges: [],
+          isGenerated: true,
+        });
+      }
+
+      // Show success and navigate
+      enqueueSnackbar(t('Project created successfully!'), {
+        variant: 'success',
+      });
+      setTimeout(() => editor.navigateToERD(newProjectId), 1000);
     } catch (e: any) {
       console.error(e);
       setDbError(e?.message || String(e));
     } finally {
       setSaving(false);
+      onLoadingChange?.(false);
     }
   };
 
@@ -293,15 +394,40 @@ const EditorChatSection: React.FC<EditorChatSectionProps> = ({ onTabChange, proj
   };
 
   return (
-    <Stack sx={{ maxHeight: '100%', height: '100%', display: 'flex', flexDirection: 'column' }}>
+    <Stack
+      sx={{
+        maxHeight: '100%',
+        height: '100%',
+        display: 'flex',
+        flexDirection: 'column',
+      }}
+    >
       {(saving || dbError) && (
-        <Box sx={{ p: 1, borderBottom: '1px solid rgba(255,255,255,0.08)', bgcolor: 'rgba(0,0,0,0.15)' }}>
+        <Box
+          sx={{
+            p: 1,
+            borderBottom: '1px solid rgba(255,255,255,0.08)',
+            bgcolor: 'rgba(0,0,0,0.15)',
+          }}
+        >
           {saving && <LinearProgress />}
-          {dbError && <Alert severity="error" sx={{ mt: saving ? 1 : 0 }}>{dbError}</Alert>}
+          {dbError && (
+            <Alert severity="error" sx={{ mt: saving ? 1 : 0 }}>
+              {dbError}
+            </Alert>
+          )}
         </Box>
       )}
 
-      <Stack direction="row" spacing={1} sx={{ p: 1.5, borderBottom: '1px solid', borderColor: 'rgba(255,255,255,0.08)' }}>
+      <Stack
+        direction="row"
+        spacing={1}
+        sx={{
+          p: 1.5,
+          borderBottom: '1px solid',
+          borderColor: 'rgba(255,255,255,0.08)',
+        }}
+      >
         <Button
           size="small"
           variant={activeTab === 'chat' ? 'contained' : 'soft'}
@@ -322,7 +448,13 @@ const EditorChatSection: React.FC<EditorChatSectionProps> = ({ onTabChange, proj
         >
           {t('Design')}
         </Button>
-        {conversationId && <Chip size="small" sx={{ ml: 1 }} label={`Conv: ${conversationId.slice(0, 6)}…`} />}
+        {conversationId && (
+          <Chip
+            size="small"
+            sx={{ ml: 1 }}
+            label={`Conv: ${conversationId.slice(0, 6)}…`}
+          />
+        )}
       </Stack>
 
       <Box sx={{ flex: 1, overflowY: 'auto', p: 2 }}>
@@ -332,20 +464,45 @@ const EditorChatSection: React.FC<EditorChatSectionProps> = ({ onTabChange, proj
               {m.type === 'ai' ? (
                 <Stack spacing={1}>
                   <Stack direction="row" alignItems="center" spacing={1}>
-                    <Box sx={{ color: 'primary.main', width: 24, height: 24, position: 'relative' }}>
+                    <Box
+                      sx={{
+                        color: 'primary.main',
+                        width: 24,
+                        height: 24,
+                        position: 'relative',
+                      }}
+                    >
                       <Image src={ImagesSrc.Logo} alt={t('zakicode')} fill />
                     </Box>
-                    <Typography variant="body2" sx={{ fontWeight: 600, color: 'white' }}>
+                    <Typography
+                      variant="body2"
+                      sx={{ fontWeight: 600, color: 'white' }}
+                    >
                       {m.name}
                     </Typography>
                   </Stack>
-                  <Typography variant="body2" sx={{ color: 'text.secondary', whiteSpace: 'pre-wrap', ml: 4 }}>
+                  <Typography
+                    variant="body2"
+                    sx={{
+                      color: 'text.secondary',
+                      whiteSpace: 'pre-wrap',
+                      ml: 4,
+                    }}
+                  >
                     {m.content}
                   </Typography>
                   <Stack direction="row" spacing={1} sx={{ ml: 4 }}>
-                    <IconButton size="small" sx={{ color: 'text.secondary' }}><Iconify icon="mdi:thumb-down" /></IconButton>
-                    <IconButton size="small" sx={{ color: 'text.secondary' }}><Iconify icon="mdi:thumb-up" /></IconButton>
-                    <IconButton size="small" sx={{ color: 'text.secondary' }} onClick={() => copy(m.content)}>
+                    <IconButton size="small" sx={{ color: 'text.secondary' }}>
+                      <Iconify icon="mdi:thumb-down" />
+                    </IconButton>
+                    <IconButton size="small" sx={{ color: 'text.secondary' }}>
+                      <Iconify icon="mdi:thumb-up" />
+                    </IconButton>
+                    <IconButton
+                      size="small"
+                      sx={{ color: 'text.secondary' }}
+                      onClick={() => copy(m.content)}
+                    >
                       <Iconify icon="mdi:content-copy" />
                     </IconButton>
                   </Stack>
@@ -353,21 +510,48 @@ const EditorChatSection: React.FC<EditorChatSectionProps> = ({ onTabChange, proj
               ) : (
                 <Stack spacing={1} alignItems="flex-end">
                   <Stack direction="row" alignItems="center" spacing={1}>
-                    <Typography variant="body2" sx={{ fontWeight: 600, color: 'white' }}>
+                    <Typography
+                      variant="body2"
+                      sx={{ fontWeight: 600, color: 'white' }}
+                    >
                       {m.name || 'User'}
                     </Typography>
-                    <Avatar sx={{ width: 24, height: 24, bgcolor: 'secondary.main', fontSize: 12 }}>
+                    <Avatar
+                      sx={{
+                        width: 24,
+                        height: 24,
+                        bgcolor: 'secondary.main',
+                        fontSize: 12,
+                      }}
+                    >
                       {(m.name || 'U').charAt(0)}
                     </Avatar>
                   </Stack>
-                  <Box sx={{ maxWidth: '80%', p: 2, borderRadius: 2, bgcolor: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)' }}>
-                    <Typography variant="body2" sx={{ color: 'text.secondary', wordBreak: 'break-word' }}>
+                  <Box
+                    sx={{
+                      maxWidth: '80%',
+                      p: 2,
+                      borderRadius: 2,
+                      bgcolor: 'rgba(255,255,255,0.06)',
+                      border: '1px solid rgba(255,255,255,0.1)',
+                    }}
+                  >
+                    <Typography
+                      variant="body2"
+                      sx={{ color: 'text.secondary', wordBreak: 'break-word' }}
+                    >
                       {m.content}
                     </Typography>
                   </Box>
                   <Stack direction="row" spacing={1} sx={{ ml: 4 }}>
-                    <IconButton size="small" sx={{ color: 'text.secondary' }}><Iconify icon="eva:edit-2-outline" /></IconButton>
-                    <IconButton size="small" sx={{ color: 'text.secondary' }} onClick={() => copy(m.content)}>
+                    <IconButton size="small" sx={{ color: 'text.secondary' }}>
+                      <Iconify icon="eva:edit-2-outline" />
+                    </IconButton>
+                    <IconButton
+                      size="small"
+                      sx={{ color: 'text.secondary' }}
+                      onClick={() => copy(m.content)}
+                    >
                       <Iconify icon="mdi:content-copy" />
                     </IconButton>
                   </Stack>
@@ -379,7 +563,16 @@ const EditorChatSection: React.FC<EditorChatSectionProps> = ({ onTabChange, proj
         <div ref={messagesEndRef} />
       </Box>
 
-      <Box sx={{ m: 2, p: 2, borderRadius: 3, borderTop: '1px solid', borderColor: 'rgba(255,255,255,0.08)', bgcolor: 'rgba(255,255,255,0.06)' }}>
+      <Box
+        sx={{
+          m: 2,
+          p: 2,
+          borderRadius: 3,
+          borderTop: '1px solid',
+          borderColor: 'rgba(255,255,255,0.08)',
+          bgcolor: 'rgba(255,255,255,0.06)',
+        }}
+      >
         <TextField
           fullWidth
           multiline
@@ -401,11 +594,19 @@ const EditorChatSection: React.FC<EditorChatSectionProps> = ({ onTabChange, proj
                     width: 30,
                     height: 30,
                     mt: 0.5,
-                    '&:hover': { backgroundColor: message?.trim() ? '#FFFFFF' : '#424242' },
+                    '&:hover': {
+                      backgroundColor: message?.trim() ? '#FFFFFF' : '#424242',
+                    },
                     '&.Mui-disabled': { backgroundColor: '#777777' },
                   }}
                 >
-                  <Iconify icon={isLoading ? 'eos-icons:bubble-loading' : 'fa6-solid:arrow-up'} />
+                  <Iconify
+                    icon={
+                      isLoading
+                        ? 'eos-icons:bubble-loading'
+                        : 'fa6-solid:arrow-up'
+                    }
+                  />
                 </IconButton>
               </InputAdornment>
             ),
@@ -418,7 +619,10 @@ const EditorChatSection: React.FC<EditorChatSectionProps> = ({ onTabChange, proj
               '&:hover': { borderColor: 'rgba(255,255,255,0.2)' },
               '&.Mui-focused': { borderColor: 'success.main' },
             },
-            '& .MuiInputBase-input': { color: 'text.primary', '&::placeholder': { color: 'text.secondary', opacity: 0.7 } },
+            '& .MuiInputBase-input': {
+              color: 'text.primary',
+              '&::placeholder': { color: 'text.secondary', opacity: 0.7 },
+            },
           }}
         />
       </Box>

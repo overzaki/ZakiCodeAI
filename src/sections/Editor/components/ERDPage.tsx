@@ -42,6 +42,9 @@ function isUuid(x?: string | null) {
 const ERDPage: React.FC<ERDPageProps> = ({ onViewStructure, projectId: propProjectId }) => {
   const search = useSearchParams();
 
+  // Get type from URL to auto-redirect
+  const urlType = (search.get('type') || 'website').toLowerCase();
+  
   // State management
   const [activeId, setActiveId] = useState<string | null>(null);
   const [projectInfo, setProjectInfo] = useState<ProjectInfo | null>(null);
@@ -50,6 +53,7 @@ const ERDPage: React.FC<ERDPageProps> = ({ onViewStructure, projectId: propProje
   const [backendCount, setBackendCount] = useState(0);
   const [mobileCount, setMobileCount] = useState(0);
   const [loadingCounts, setLoadingCounts] = useState(false);
+  const [hasAutoRedirected, setHasAutoRedirected] = useState(false);
 
   // دالة تحسم الـ id وتحمل معلومات المشروع
   const resolveActiveProjectId = useCallback(async () => {
@@ -135,6 +139,29 @@ const ERDPage: React.FC<ERDPageProps> = ({ onViewStructure, projectId: propProje
     resolveActiveProjectId();
   }, [resolveActiveProjectId]);
 
+  // Auto-redirect based on URL type after project is resolved
+  useEffect(() => {
+    if (!resolvingId && activeId && !hasAutoRedirected) {
+      setHasAutoRedirected(true);
+      
+      // Map URL type to structure type
+      if (urlType === 'website') {
+        console.log('Auto-redirecting to frontend structure');
+        onViewStructure('frontend');
+      } else if (urlType === 'backend' || urlType === 'dashboard') {
+        console.log('Auto-redirecting to backend structure');
+        onViewStructure('backend');
+      } else if (urlType === 'app' || urlType === 'mobile') {
+        console.log('Auto-redirecting to frontend structure (mobile app)');
+        onViewStructure('frontend'); // Mobile apps use frontend structure
+      } else {
+        // Default to frontend for unknown types
+        console.log('Auto-redirecting to frontend structure (default)');
+        onViewStructure('frontend');
+      }
+    }
+  }, [resolvingId, activeId, hasAutoRedirected, urlType, onViewStructure]);
+
   // تحميل العدّ لكل منصة + Realtime
   const loadCounts = useCallback(async (pid: string) => {
     setLoadingCounts(true);
@@ -203,16 +230,36 @@ const ERDPage: React.FC<ERDPageProps> = ({ onViewStructure, projectId: propProje
   // حساب العدد الإجمالي
   const totalPages = webCount + backendCount + mobileCount;
 
+  // Show loading state while auto-redirecting
+  if (resolvingId || !hasAutoRedirected) {
+    return (
+      <Box sx={{ p: 3, height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <Stack spacing={3} alignItems="center">
+          <CircularProgress size={40} />
+          <Typography variant="h6" sx={{ color: 'text.secondary' }}>
+            {resolvingId ? 'Resolving project...' : `Loading ${urlType} structure...`}
+          </Typography>
+          {projectInfo && (
+            <Typography variant="body2" sx={{ color: 'text.secondary' }}>
+              {projectInfo.name}
+            </Typography>
+          )}
+        </Stack>
+      </Box>
+    );
+  }
+
+  // Fallback UI (should rarely be seen due to auto-redirect)
   return (
     <Box sx={{ p: 3, height: '100%', overflow: 'auto' }}>
       <Stack spacing={4} alignItems="center">
         {/* Header */}
         <Stack spacing={2} alignItems="center">
           <Typography variant="h4" sx={{ fontWeight: 700, textAlign: 'center' }}>
-            Project Structure
+            Loading Structure...
           </Typography>
           <Typography variant="body1" sx={{ color: 'text.secondary', textAlign: 'center', maxWidth: 600 }}>
-            Choose which part you want to build and explore its full structure.
+            Redirecting to {urlType} structure based on your selection.
           </Typography>
 
           {/* Project Info */}

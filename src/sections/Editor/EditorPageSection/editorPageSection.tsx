@@ -12,8 +12,10 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import EditorHeader from '../components/EditorHeader';
 import EditorChatSection from '../components/EditorChatSection';
 import EditorPreviewSection from '../components/EditorPreviewSection';
-import { useEditor } from '@/redux/hooks/useEditor';
+import { useEditor } from '@/hooks/useEditor';
 import { supabase } from '@/lib/supabaseClient';
+import JSZip from 'jszip';
+import { enqueueSnackbar } from 'notistack';
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
@@ -37,11 +39,19 @@ const PricingPageSection = () => {
     currentView,
     projectId, // يأتي من useEditor
     generatedCode, // للحصول على files array
+    isGeneratingCode, // حالة توليد الكود
     navigateToView,
     navigateToERD,
     navigateToMain,
+    navigateToFrontend,
+    navigateToBackend,
     clearEditor,
   } = useEditor();
+
+  // Debug logging for code generation state
+  useEffect(() => {
+    console.log('EditorPageSection: isGeneratingCode changed:', isGeneratingCode);
+  }, [isGeneratingCode]);
 
   const [chatWidthPct, setChatWidthPct] = useState(35);
   const [currentPage, setCurrentPage] = useState('Home page');
@@ -52,6 +62,66 @@ const PricingPageSection = () => {
   // حالة المشروع من الداتابيز
   const [project, setProject] = useState<DBProject | null>(null);
   const [loading, setLoading] = useState(false);
+  
+  // حالة إرسال الرسائل
+  const [isMessageLoading, setIsMessageLoading] = useState(false);
+  
+  // حالة تحميل الملف
+  const [isDownloading, setIsDownloading] = useState(false);
+  
+  // حالات GitHub
+  const [gitHubInstallationId, setGitHubInstallationId] = useState('');
+  const [gitHubRepo, setGitHubRepo] = useState('');
+  const [gitHubAccount, setGitHubAccount] = useState('');
+  const [isGitHubConnected, setIsGitHubConnected] = useState(false);
+  const [isPushingToGitHub, setIsPushingToGitHub] = useState(false);
+
+  // Load GitHub settings from localStorage and URL params
+  useEffect(() => {
+    const urlParams = new URLSearchParams(window.location.search);
+    const githubConnected = urlParams.get('github');
+    const installationIdFromUrl = urlParams.get('installation_id');
+    
+    // Load from localStorage
+    const savedInstallationId = localStorage.getItem('gh_installation_id');
+    const savedRepo = localStorage.getItem('gh_default_repo');
+    const savedAccount = localStorage.getItem('gh_account_login');
+    
+    // Prioritize URL params (from GitHub callback)
+    const finalInstallationId = installationIdFromUrl || savedInstallationId;
+    
+    if (finalInstallationId) {
+      setGitHubInstallationId(finalInstallationId);
+      setIsGitHubConnected(true);
+      console.log('GitHub installation ID loaded:', finalInstallationId);
+    } else {
+      setIsGitHubConnected(false);
+    }
+    
+    if (savedRepo) {
+      setGitHubRepo(savedRepo);
+      console.log('GitHub default repo loaded:', savedRepo);
+    }
+    
+    if (savedAccount) {
+      setGitHubAccount(savedAccount);
+      console.log('GitHub account loaded:', savedAccount);
+    }
+
+    // Show success message if just connected
+    if (githubConnected === 'connected' && finalInstallationId) {
+      enqueueSnackbar(
+        `GitHub connected successfully! Installation ID: ${finalInstallationId}`,
+        { variant: 'success' }
+      );
+      
+      // Clean up URL
+      const url = new URL(window.location.href);
+      url.searchParams.delete('github');
+      url.searchParams.delete('installation_id');
+      window.history.replaceState({}, '', url.toString());
+    }
+  }, []);
 
   // --- أدوات مساعدة لدفع الحمولة إلى المعاينة ---
   const pushN8nPayload = useCallback(
@@ -200,7 +270,302 @@ const PricingPageSection = () => {
   // أزرار التحكم للمعاينة
   const handleRefresh = () => loadProject();
   const handleViewChange = (v: 'preview' | 'code') => {};
-  const handleDownload = () => {};
+  
+  const handleDownload = async () => {
+    if (!generatedCode && !project?.website_code) {
+      enqueueSnackbar('No code to download. Please generate code first.', { variant: 'warning' });
+      return;
+    }
+
+    setIsDownloading(true);
+    console.log('Download started:', { generatedCode, project: project?.name, projectId });
+    
+    try {
+      const zip = new JSZip();
+      const projectName = project?.name || `zaki-project-${projectId || 'unknown'}`;
+      console.log('Creating ZIP for project:', projectName);
+      
+      // Helper function to add files to ZIP
+      const addFilesToZip = (files: any, folderName?: string) => {
+        if (Array.isArray(files)) {
+          // Handle array format: [{path, content}]
+          files.forEach((file) => {
+            if (file.path && file.content) {
+              const filePath = folderName ? `${folderName}/${file.path.replace(/^\//, '')}` : file.path.replace(/^\//, '');
+              zip.file(filePath, file.content);
+            }
+          });
+        } else if (files && typeof files === 'object') {
+          // Handle object format: {path: {code}}
+          Object.entries(files).forEach(([path, fileData]: [string, any]) => {
+            if (fileData && (fileData.code || fileData.content)) {
+              const filePath = folderName ? `${folderName}/${path.replace(/^\//, '')}` : path.replace(/^\//, '');
+              zip.file(filePath, fileData.code || fileData.content);
+            }
+          });
+        }
+      };
+
+      // Add generated code files
+      if (generatedCode?.files) {
+        console.log('Adding generated files to ZIP:', Array.isArray(generatedCode.files) ? generatedCode.files.length : Object.keys(generatedCode.files).length);
+        addFilesToZip(generatedCode.files);
+      }
+
+      // Add platform-specific code if no files array exists
+      if (!generatedCode?.files) {
+        if (generatedCode?.website_code || project?.website_code) {
+          const websiteCode = generatedCode?.website_code || project?.website_code || '';
+          // Try to parse as JSON first (array format)
+          try {
+            const parsed = JSON.parse(websiteCode);
+            if (Array.isArray(parsed)) {
+              addFilesToZip(parsed, 'website');
+            } else {
+              // Fallback: save as single file
+              zip.file('website/index.html', websiteCode);
+            }
+          } catch {
+            // If not JSON, save as single file
+            zip.file('website/index.html', websiteCode);
+          }
+        }
+
+        if (generatedCode?.mobile_code) {
+          zip.file('mobile/App.js', generatedCode.mobile_code);
+        }
+
+        if (generatedCode?.backend_code) {
+          zip.file('backend/server.js', generatedCode.backend_code);
+        }
+      }
+
+      // Add README file with project info
+      const readmeContent = `# ${projectName}
+
+This project was generated by ZakiCode AI.
+
+## Project Information
+- Project ID: ${projectId || 'N/A'}
+- Generated: ${new Date().toLocaleString()}
+- Type: ${currentView === 'frontend' ? 'Frontend' : currentView === 'backend' ? 'Backend' : 'Full Stack'}
+
+## Getting Started
+
+1. Install dependencies:
+   \`\`\`bash
+   npm install
+   \`\`\`
+
+2. Run the development server:
+   \`\`\`bash
+   npm run dev
+   \`\`\`
+
+3. Open your browser and navigate to \`http://localhost:3000\`
+
+## Generated by ZakiCode
+Visit [ZakiCode](https://zakicode.ai) to generate more projects!
+`;
+      
+      zip.file('README.md', readmeContent);
+
+      // Generate and download ZIP
+      const blob = await zip.generateAsync({ type: 'blob' });
+      const url = URL.createObjectURL(blob);
+      
+      // Create download link
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `${projectName.replace(/[^a-zA-Z0-9-_]/g, '-')}.zip`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      
+      // Clean up
+      URL.revokeObjectURL(url);
+      
+      enqueueSnackbar(`Project "${projectName}" downloaded successfully!`, { variant: 'success' });
+    } catch (error: any) {
+      console.error('Download error:', error);
+      enqueueSnackbar(`Failed to download: ${error.message}`, { variant: 'error' });
+    } finally {
+      setIsDownloading(false);
+    }
+  };
+  
+  const handleGitHubPush = async () => {
+    if (!generatedCode && !project?.website_code) {
+      enqueueSnackbar('No code to push. Please generate code first.', { variant: 'warning' });
+      return;
+    }
+
+    if (!isGitHubConnected || !gitHubInstallationId) {
+      enqueueSnackbar('GitHub not connected. Redirecting to GitHub...', { variant: 'info' });
+      const slug = process.env.NEXT_PUBLIC_GITHUB_APP_SLUG || 'zakicode-app';
+      window.open(`https://github.com/apps/${slug}/installations/new`, '_blank');
+      return;
+    }
+
+    // If no repo selected, try to fetch and auto-select first available repo
+    let targetRepo = gitHubRepo;
+    if (!targetRepo) {
+      try {
+        enqueueSnackbar('Fetching your repositories...', { variant: 'info' });
+        const repoResponse = await fetch(`/api/github/repos?installation_id=${gitHubInstallationId}`);
+        const repoData = await repoResponse.json();
+        
+        if (repoData.repos && repoData.repos.length > 0) {
+          targetRepo = repoData.repos[0].full_name;
+          setGitHubRepo(targetRepo);
+          localStorage.setItem('gh_default_repo', targetRepo);
+          enqueueSnackbar(`Auto-selected repository: ${targetRepo}`, { variant: 'info' });
+        } else {
+          enqueueSnackbar('No repositories found. Please create a repository on GitHub first.', { variant: 'warning' });
+          window.open('https://github.com/new', '_blank');
+          return;
+        }
+      } catch (error) {
+        enqueueSnackbar('Failed to fetch repositories. Please select one manually.', { variant: 'warning' });
+        return;
+      }
+    }
+
+    setIsPushingToGitHub(true);
+    console.log('GitHub push started:', { generatedCode, project: project?.name, projectId });
+
+    try {
+      // Prepare files for GitHub API
+      const filesToPush: Record<string, any> = {};
+
+      if (generatedCode?.files) {
+        // Handle files array or object format
+        if (Array.isArray(generatedCode.files)) {
+          generatedCode.files.forEach((file) => {
+            if (file.path && file.content) {
+              filesToPush[file.path] = { code: file.content };
+            }
+          });
+        } else if (typeof generatedCode.files === 'object') {
+          Object.assign(filesToPush, generatedCode.files);
+        }
+      }
+
+      // Add platform-specific code if no files array exists
+      if (Object.keys(filesToPush).length === 0) {
+        if (generatedCode?.website_code || project?.website_code) {
+          const websiteCode = generatedCode?.website_code || project?.website_code || '';
+          try {
+            const parsed = JSON.parse(websiteCode);
+            if (Array.isArray(parsed)) {
+              parsed.forEach((file) => {
+                if (file.path && file.content) {
+                  filesToPush[file.path] = { code: file.content };
+                }
+              });
+            } else {
+              filesToPush['/index.html'] = { code: websiteCode };
+            }
+          } catch {
+            filesToPush['/index.html'] = { code: websiteCode };
+          }
+        }
+
+        if (generatedCode?.mobile_code) {
+          filesToPush['/App.js'] = { code: generatedCode.mobile_code };
+        }
+
+        if (generatedCode?.backend_code) {
+          filesToPush['/server.js'] = { code: generatedCode.backend_code };
+        }
+      }
+
+      // Add README file
+      const projectName = project?.name || `zaki-project-${projectId || 'unknown'}`;
+      const readmeContent = `# ${projectName}
+
+This project was generated by ZakiCode AI.
+
+## Project Information
+- Project ID: ${projectId || 'N/A'}
+- Generated: ${new Date().toLocaleString()}
+- Type: ${currentView === 'frontend' ? 'Frontend' : currentView === 'backend' ? 'Backend' : 'Full Stack'}
+
+## Getting Started
+
+1. Install dependencies:
+   \`\`\`bash
+   npm install
+   \`\`\`
+
+2. Run the development server:
+   \`\`\`bash
+   npm run dev
+   \`\`\`
+
+3. Open your browser and navigate to \`http://localhost:3000\`
+
+## Generated by ZakiCode
+Visit [ZakiCode](https://zakicode.ai) to generate more projects!
+`;
+      
+      filesToPush['/README.md'] = { code: readmeContent };
+
+      console.log('Pushing files to GitHub:', Object.keys(filesToPush));
+
+      // Push to GitHub
+      const response = await fetch('/api/github/commit', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          installation_id: gitHubInstallationId,
+          repo_full_name: targetRepo,
+          files: filesToPush,
+          projectId: projectId,
+          dir: `projects/${projectName.replace(/[^a-zA-Z0-9-_]/g, '-')}`
+        }),
+      });
+
+      const result = await response.json();
+
+      if (response.ok && result.ok) {
+        enqueueSnackbar(
+          `Successfully pushed to ${targetRepo}! ${result.pushedFiles} files uploaded.`,
+          { variant: 'success' }
+        );
+        console.log('GitHub push successful:', result);
+      } else {
+        throw new Error(result.error || 'Failed to push to GitHub');
+      }
+
+    } catch (error: any) {
+      console.error('GitHub push error:', error);
+      enqueueSnackbar(`Failed to push to GitHub: ${error.message}`, { variant: 'error' });
+    } finally {
+      setIsPushingToGitHub(false);
+    }
+  };
+
+  const handleGitHubConnect = () => {
+    const slug = process.env.NEXT_PUBLIC_GITHUB_APP_SLUG || 'zakicode-app';
+    window.open(`https://github.com/apps/${slug}/installations/new`, '_blank');
+  };
+
+  const handleGitHubDisconnect = () => {
+    if (typeof window !== 'undefined') {
+      localStorage.removeItem('gh_installation_id');
+      localStorage.removeItem('gh_account_login');
+      localStorage.removeItem('gh_account_type');
+      localStorage.removeItem('gh_connected_at');
+      localStorage.removeItem('gh_default_repo');
+    }
+    setGitHubInstallationId('');
+    setGitHubAccount('');
+    setGitHubRepo('');
+    setIsGitHubConnected(false);
+    enqueueSnackbar('GitHub disconnected successfully!', { variant: 'success' });
+  };
+  
   const handlePageChange = (p: string) => setCurrentPage(p);
   const handleDeviceChange = (d: string) => setCurrentDevice(d);
   const handleZoomChange = (z: number) => setCurrentZoom(z);
@@ -210,6 +575,26 @@ const PricingPageSection = () => {
   const handleViewStructure = (type: 'frontend' | 'backend') =>
     navigateToView(type);
   const handleBackToERD = () => navigateToERD(projectId || '');
+  
+  // Handle header type change - auto-navigate to appropriate structure
+  const handleTypeChange = (type: 'website' | 'backend' | 'app') => {
+    if (!projectId) return;
+    
+    console.log('Header type changed to:', type, 'Current view:', currentView);
+    
+    // If we're currently in a structure view, navigate to the new structure
+    if (currentView === 'frontend' || currentView === 'backend' || currentView === 'erd') {
+      if (type === 'website' || type === 'app') {
+        console.log('Navigating to frontend structure');
+        navigateToFrontend(projectId);
+      } else if (type === 'backend') {
+        console.log('Navigating to backend structure');
+        navigateToBackend(projectId);
+      }
+    }
+    // If we're in main view, don't auto-navigate - let user click Map button
+    // This preserves the current behavior for main view
+  };
 
   return (
     <Stack
@@ -218,7 +603,7 @@ const PricingPageSection = () => {
     >
       {/* Header */}
       <EditorHeader
-        onTypeChange={() => {}}
+        onTypeChange={handleTypeChange}
         onNewProject={handleNewProject}
         onUpgrade={() => {}}
         onInvite={() => {}}
@@ -245,6 +630,7 @@ const PricingPageSection = () => {
             onDiscuss={() => {}}
             onSuccessfulGeneration={handleSuccessfulGeneration}
             onSuccessfulCodeGeneration={handleSuccessfulCodeGeneration}
+            onLoadingChange={setIsMessageLoading}
             projectId={projectId}
             currentView={currentView}
           />
@@ -283,9 +669,18 @@ const PricingPageSection = () => {
             currentDevice={currentDevice}
             currentZoom={currentZoom}
             currentView={currentView}
+            isMessageLoading={isMessageLoading}
+            isCodeGenerating={isGeneratingCode}
+            isDownloading={isDownloading}
+            isPushingToGitHub={isPushingToGitHub}
+            isGitHubConnected={isGitHubConnected}
+            gitHubAccount={gitHubAccount}
             onRefresh={handleRefresh}
             onViewChange={handleViewChange}
             onDownload={handleDownload}
+            onGitHubPush={handleGitHubPush}
+            onGitHubConnect={handleGitHubConnect}
+            onGitHubDisconnect={handleGitHubDisconnect}
             onPageChange={handlePageChange}
             onDeviceChange={handleDeviceChange}
             onZoomChange={handleZoomChange}

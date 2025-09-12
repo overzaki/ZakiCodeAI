@@ -18,6 +18,12 @@ import {
   MenuItem,
   FormControl,
   Chip,
+  CircularProgress,
+  Backdrop,
+  Tooltip,
+  Menu,
+  ListItemIcon,
+  ListItemText,
 } from '@mui/material';
 import Iconify from '@/components/iconify';
 import ERDPage from './ERDPage';
@@ -74,9 +80,18 @@ interface EditorPreviewSectionProps {
   currentDevice?: Device | string;
   currentZoom?: number;
   currentView?: SysView;
+  isMessageLoading?: boolean;
+  isCodeGenerating?: boolean;
+  isDownloading?: boolean;
+  isPushingToGitHub?: boolean;
+  isGitHubConnected?: boolean;
+  gitHubAccount?: string;
   onRefresh?: () => void;
   onViewChange?: (view: ViewMode) => void;
   onDownload?: () => void;
+  onGitHubPush?: () => void;
+  onGitHubConnect?: () => void;
+  onGitHubDisconnect?: () => void;
   onPageChange?: (route: string) => void;
   onDeviceChange?: (device: string) => void;
   onZoomChange?: (zoom: number) => void;
@@ -362,9 +377,381 @@ function fingerprint(map: FileMap): string {
   return String(hash);
 }
 
+/* =============== Custom Preview Component =============== */
+const SynchronizedPreview: React.FC<{
+  selectedRoute: string;
+  onRouteChange: (route: string) => void;
+}> = ({ selectedRoute, onRouteChange }) => {
+  const [lastSelectedRoute, setLastSelectedRoute] = useState<string>('');
+  const [isNavigating, setIsNavigating] = useState(false);
+  const [urlChangeWorking, setUrlChangeWorking] = useState(false);
+  const [lastNavigationTime, setLastNavigationTime] = useState(0);
+  const fallbackTimeoutsRef = useRef<NodeJS.Timeout[]>([]);
+  const routeChangeFromPreviewRef = useRef(false);
+
+  // Send navigation messages to Sandpack iframe
+  useEffect(() => {
+    const now = Date.now();
+    const timeSinceLastNav = now - lastNavigationTime;
+
+    // Only trigger navigation if the route change is NOT from preview
+    if (
+      selectedRoute &&
+      selectedRoute !== lastSelectedRoute &&
+      !isNavigating &&
+      timeSinceLastNav > 1000
+    ) {
+      // Check if this route change came from preview
+      if (routeChangeFromPreviewRef.current) {
+        console.log(
+          'Route change from preview detected, updating lastSelectedRoute without navigation',
+        );
+        setLastSelectedRoute(selectedRoute);
+        routeChangeFromPreviewRef.current = false; // Reset flag
+        return;
+      }
+
+      console.log('Route changed from dropdown to:', selectedRoute);
+      setLastSelectedRoute(selectedRoute);
+      setIsNavigating(true);
+      setLastNavigationTime(now);
+
+      // More targeted approach to find Sandpack iframe
+      const sendToSandpackFrame = () => {
+        // Look for Sandpack preview iframe specifically (not the runtime)
+        const allIframes = document.querySelectorAll(
+          'iframe[src*="codesandbox.io"], iframe[src*="nodebox"]',
+        );
+        const previewIframes = Array.from(allIframes).filter((iframe) => {
+          const src = (iframe as HTMLIFrameElement).src;
+          return src && !src.includes('runtime') && !src.includes('devtools');
+        });
+
+        console.log(
+          'Found preview iframes:',
+          previewIframes.length,
+          'total:',
+          allIframes.length,
+        );
+
+        previewIframes.forEach((iframe, index) => {
+          try {
+            const iframeEl = iframe as HTMLIFrameElement;
+            console.log(
+              `Sending message to preview iframe ${index}:`,
+              iframeEl.src,
+            );
+            if (iframeEl.contentWindow) {
+              // Send multiple types of navigation messages
+              iframeEl.contentWindow.postMessage(
+                {
+                  type: 'NAVIGATE_TO_ROUTE',
+                  route: selectedRoute,
+                  source: 'editor-preview',
+                },
+                '*',
+              );
+
+              // Also try direct navigation
+              try {
+                console.log('Attempting direct navigation to:', selectedRoute);
+                iframeEl.contentWindow.history.pushState({}, '', selectedRoute);
+                iframeEl.contentWindow.dispatchEvent(
+                  new PopStateEvent('popstate'),
+                );
+              } catch (historyError: unknown) {
+                console.log(
+                  'Direct navigation failed (expected due to CORS):',
+                  historyError instanceof Error
+                    ? historyError.message
+                    : String(historyError),
+                );
+              }
+            }
+          } catch (error) {
+            console.error('Error sending message to iframe:', error);
+          }
+        });
+
+        // Fallback: send to all iframes
+        if (previewIframes.length === 0) {
+          const allIframes = document.querySelectorAll('iframe');
+          console.log('Fallback: sending to all iframes:', allIframes.length);
+          allIframes.forEach((iframe) => {
+            try {
+              const iframeEl = iframe as HTMLIFrameElement;
+              if (iframeEl.contentWindow) {
+                iframeEl.contentWindow.postMessage(
+                  {
+                    type: 'NAVIGATE_TO_ROUTE',
+                    route: selectedRoute,
+                    source: 'editor-preview',
+                  },
+                  '*',
+                );
+              }
+            } catch (error) {
+              // Cross-origin restrictions, ignore
+            }
+          });
+        }
+      };
+
+      // Clear any existing fallback timeouts
+      fallbackTimeoutsRef.current.forEach((timeout) => clearTimeout(timeout));
+      fallbackTimeoutsRef.current = [];
+
+      // Multiple attempts to ensure message delivery
+      setTimeout(sendToSandpackFrame, 100);
+      setTimeout(sendToSandpackFrame, 500);
+      setTimeout(sendToSandpackFrame, 1000);
+      setTimeout(sendToSandpackFrame, 2000);
+
+      // Quick fallback after 1.5 seconds
+      const quickFallback = setTimeout(() => {
+        console.log('Quick fallback: Checking if navigation worked...');
+        const allIframes = document.querySelectorAll(
+          'iframe[src*="codesandbox.io"], iframe[src*="nodebox"]',
+        );
+        const previewIframes = Array.from(allIframes).filter((iframe) => {
+          const src = (iframe as HTMLIFrameElement).src;
+          return src && !src.includes('runtime') && !src.includes('devtools');
+        });
+
+        previewIframes.forEach((iframe: Element, index: number) => {
+          const iframeEl = iframe as HTMLIFrameElement;
+          if (iframeEl.src) {
+            const currentUrl = new URL(iframeEl.src);
+            const currentPath = currentUrl.pathname;
+
+            if (currentPath !== selectedRoute) {
+              console.log(
+                `Quick fallback: Navigation failed, forcing refresh to ${selectedRoute}`,
+              );
+              currentUrl.pathname = selectedRoute;
+              iframeEl.src = currentUrl.toString();
+            }
+          }
+        });
+      }, 1500);
+
+      // Fallback: If all else fails, refresh the iframe with the new route
+      const mainFallback = setTimeout(() => {
+        console.log(
+          'Fallback: Attempting to refresh iframe with new route:',
+          selectedRoute,
+        );
+        const allIframes = document.querySelectorAll(
+          'iframe[src*="codesandbox.io"], iframe[src*="nodebox"]',
+        );
+        const previewIframes = Array.from(allIframes).filter((iframe) => {
+          const src = (iframe as HTMLIFrameElement).src;
+          return src && !src.includes('runtime') && !src.includes('devtools');
+        });
+
+        console.log(
+          'Found preview iframes for refresh:',
+          previewIframes.length,
+        );
+
+        previewIframes.forEach((iframe: Element, index: number) => {
+          try {
+            const iframeEl = iframe as HTMLIFrameElement;
+            console.log(`Iframe ${index} current URL:`, iframeEl.src);
+            console.log(`Target route:`, selectedRoute);
+
+            if (iframeEl.src) {
+              const currentUrl = new URL(iframeEl.src);
+              const currentPath = currentUrl.pathname;
+
+              console.log(
+                `Current path: "${currentPath}", Target path: "${selectedRoute}"`,
+              );
+
+              // Always refresh if the paths don't match
+              if (currentPath !== selectedRoute) {
+                currentUrl.pathname = selectedRoute;
+                const newUrl = currentUrl.toString();
+                console.log('Refreshing iframe from:', iframeEl.src);
+                console.log('Refreshing iframe to:', newUrl);
+                iframeEl.src = newUrl;
+              } else {
+                console.log(
+                  'Iframe already at correct route, no refresh needed',
+                );
+              }
+            }
+          } catch (error) {
+            console.error('Error refreshing iframe:', error);
+          }
+        });
+        // Reset navigation state
+        setIsNavigating(false);
+      }, 3000);
+
+      // Store timeout references
+      fallbackTimeoutsRef.current = [quickFallback, mainFallback];
+
+      // Also try injecting a script directly into the iframe
+      setTimeout(() => {
+        const allIframes = document.querySelectorAll(
+          'iframe[src*="codesandbox.io"], iframe[src*="nodebox"]',
+        );
+        const previewIframes = Array.from(allIframes).filter((iframe) => {
+          const src = (iframe as HTMLIFrameElement).src;
+          return src && !src.includes('runtime') && !src.includes('devtools');
+        });
+
+        previewIframes.forEach((iframe: Element, index: number) => {
+          try {
+            const iframeEl = iframe as HTMLIFrameElement;
+            const iframeDoc =
+              iframeEl.contentDocument || iframeEl.contentWindow?.document;
+            if (iframeDoc) {
+              console.log(
+                `Attempting to inject navigation script into iframe ${index}`,
+              );
+              const script = iframeDoc.createElement('script');
+              script.textContent = `
+                console.log('[InjectedScript] Navigation script loaded');
+                window.addEventListener('message', function(event) {
+                  console.log('[InjectedScript] Received message:', event.data);
+                  if (event.data && event.data.type === 'NAVIGATE_TO_ROUTE' && event.data.route) {
+                    console.log('[InjectedScript] Navigating to:', event.data.route);
+                    if (window.history && window.history.pushState) {
+                      window.history.pushState({}, '', event.data.route);
+                      window.dispatchEvent(new PopStateEvent('popstate'));
+                      console.log('[InjectedScript] Navigation completed');
+                    }
+                  }
+                });
+              `;
+              iframeDoc.head.appendChild(script);
+            }
+          } catch (error: unknown) {
+            console.log(
+              'Script injection failed (expected due to CORS):',
+              error instanceof Error ? error.message : String(error),
+            );
+          }
+        });
+      }, 1500);
+    }
+  }, [selectedRoute, lastSelectedRoute]);
+
+  // Listen for route change messages from iframe
+  useEffect(() => {
+    const handleMessage = (event: MessageEvent) => {
+      console.log('Received message from iframe:', event.data);
+
+      if (event.data?.type === 'NAVIGATION_SYNC_READY') {
+        console.log(
+          'NavigationSync ready in Sandpack, current route:',
+          event.data.route,
+        );
+        // If there's a mismatch, send the correct route
+        if (event.data.route !== selectedRoute) {
+          console.log(
+            'Route mismatch detected, sending current route:',
+            selectedRoute,
+          );
+          setTimeout(() => {
+            const sandpackIframes = document.querySelectorAll(
+              'iframe[src*="codesandbox.io"], iframe[src*="nodebox"], iframe[title*="sandpack"]',
+            );
+            sandpackIframes.forEach((iframe) => {
+              try {
+                const iframeEl = iframe as HTMLIFrameElement;
+                if (iframeEl.contentWindow) {
+                  iframeEl.contentWindow.postMessage(
+                    {
+                      type: 'NAVIGATE_TO_ROUTE',
+                      route: selectedRoute,
+                      source: 'editor-preview-ready',
+                    },
+                    '*',
+                  );
+                }
+              } catch (error) {
+                console.error('Error sending ready message:', error);
+              }
+            });
+          }, 100);
+        }
+      }
+
+      // Handle Sandpack's native urlchange messages
+      if (event.data?.type === 'urlchange' && event.data?.url) {
+        try {
+          const url = new URL(event.data.url);
+          const newRoute = url.pathname;
+          console.log(
+            'Sandpack URL change detected:',
+            newRoute,
+            'current:',
+            selectedRoute,
+          );
+
+          // Mark that urlchange is working
+          setUrlChangeWorking(true);
+
+          // Cancel any pending fallback refreshes since navigation worked
+          console.log(
+            'Cancelling pending fallbacks due to successful urlchange',
+          );
+          fallbackTimeoutsRef.current.forEach((timeout) =>
+            clearTimeout(timeout),
+          );
+          fallbackTimeoutsRef.current = [];
+
+          if (newRoute !== selectedRoute) {
+            console.log('Updating dropdown to:', newRoute);
+            // Set flag to indicate this route change is from preview
+            routeChangeFromPreviewRef.current = true;
+            onRouteChange(newRoute);
+          }
+          // Reset navigation state when we get a urlchange
+          setIsNavigating(false);
+        } catch (error) {
+          console.error('Error parsing URL from Sandpack:', error);
+        }
+      }
+
+      // Also handle our custom route change messages (backup)
+      if (event.data?.type === 'ROUTE_CHANGED' && event.data?.route) {
+        console.log(
+          'Custom route change detected from Sandpack:',
+          event.data.route,
+          'current:',
+          selectedRoute,
+        );
+        if (event.data.route !== selectedRoute) {
+          console.log('Updating dropdown to:', event.data.route);
+          onRouteChange(event.data.route);
+        }
+      }
+    };
+
+    window.addEventListener('message', handleMessage);
+    return () => {
+      window.removeEventListener('message', handleMessage);
+      // Clean up any pending timeouts
+      fallbackTimeoutsRef.current.forEach((timeout) => clearTimeout(timeout));
+    };
+  }, [selectedRoute, onRouteChange]);
+
+  return (
+    <SandpackPreview
+      style={{ height: '100%', border: 0 }}
+      showOpenInCodeSandbox={false}
+    />
+  );
+};
+
 /* =============== Component =============== */
 const EditorPreviewSection: React.FC<EditorPreviewSectionProps> = (props) => {
   const search = useSearchParams();
+  const [githubMenuAnchor, setGithubMenuAnchor] = useState<null | HTMLElement>(null);
   const rawProject =
     search.get('project') || search.get('projectId') || undefined;
   const urlType = (search.get('type') || 'website').toLowerCase();
@@ -802,7 +1189,7 @@ export default function App() {
       for (const part of parts) {
         let content = part.content;
 
-        // Fix common import/export issues
+        // Fix common import/export issues and add navigation sync
         if (part.path.includes('.jsx') || part.path.includes('.js')) {
           const originalContent = content;
 
@@ -826,16 +1213,137 @@ export default function App() {
             "import Button from './components/Button.jsx'",
           );
 
+          // Add navigation sync to App.jsx files
+          console.log('Checking file for navigation sync:', part.path, {
+            isAppFile:
+              part.path.includes('/App.jsx') || part.path.includes('/App.js'),
+            hasBrowserRouter: content.includes('BrowserRouter'),
+            hasRoutes: content.includes('Routes'),
+            hasNavigationSync: content.includes('NavigationSync'),
+          });
+
+          if (
+            (part.path.includes('/App.jsx') || part.path.includes('/App.js')) &&
+            content.includes('BrowserRouter') &&
+            content.includes('Routes') &&
+            !content.includes('NavigationSync')
+          ) {
+            console.log('INJECTING NavigationSync into:', part.path);
+
+            // Add useNavigate and useLocation imports if not present
+            if (
+              !content.includes('useNavigate') ||
+              !content.includes('useLocation')
+            ) {
+              content = content.replace(
+                /import\s*{\s*([^}]*)\s*}\s*from\s*['"]react-router-dom['"]/,
+                (match, imports) => {
+                  const importList = imports
+                    .split(',')
+                    .map((s: string) => s.trim());
+                  if (!importList.includes('useNavigate'))
+                    importList.push('useNavigate');
+                  if (!importList.includes('useLocation'))
+                    importList.push('useLocation');
+                  return `import { ${importList.join(', ')} } from 'react-router-dom'`;
+                },
+              );
+            }
+
+            // Add useEffect import if not present
+            if (!content.includes('useEffect')) {
+              content = content.replace(
+                /import\s+React(?:\s*,\s*{\s*([^}]*)\s*})?\s*from\s*['"]react['"]/,
+                (match, hooks) => {
+                  if (hooks) {
+                    const hookList = hooks
+                      .split(',')
+                      .map((s: string) => s.trim());
+                    if (!hookList.includes('useEffect'))
+                      hookList.push('useEffect');
+                    return `import React, { ${hookList.join(', ')} } from 'react'`;
+                  } else {
+                    return `import React, { useEffect } from 'react'`;
+                  }
+                },
+              );
+            }
+
+            // Add NavigationSync component before the main App component
+            const navigationSyncComponent = `
+function NavigationSync() {
+  const navigate = useNavigate();
+  const location = useLocation();
+
+  useEffect(() => {
+    console.log('[NavigationSync] Component mounted, current route:', location.pathname);
+    
+    // Listen for navigation messages from parent
+    const handleMessage = (event) => {
+      console.log('[NavigationSync] Received message:', event.data);
+      
+      if (event.data?.type === 'NAVIGATE_TO_ROUTE' && event.data?.route) {
+        console.log('[NavigationSync] Navigating to:', event.data.route);
+        navigate(event.data.route);
+      }
+    };
+
+    window.addEventListener('message', handleMessage);
+    
+    // Notify parent that we're ready to receive messages
+    if (window.parent !== window) {
+      console.log('[NavigationSync] Sending ready message');
+      window.parent.postMessage({
+        type: 'NAVIGATION_SYNC_READY',
+        route: location.pathname
+      }, '*');
+    }
+    
+    return () => window.removeEventListener('message', handleMessage);
+  }, [navigate]);
+
+  useEffect(() => {
+    console.log('[NavigationSync] Route changed to:', location.pathname);
+    
+    // Notify parent of route changes with a small delay to ensure navigation is complete
+    if (window.parent !== window) {
+      setTimeout(() => {
+        console.log('[NavigationSync] Notifying parent of route change:', location.pathname);
+        window.parent.postMessage({
+          type: 'ROUTE_CHANGED',
+          route: location.pathname,
+          source: 'sandpack-preview'
+        }, '*');
+      }, 50);
+    }
+  }, [location.pathname]);
+
+  return null;
+}
+`;
+
+            // Insert NavigationSync before the App function
+            content = content.replace(
+              /(function App\(\)|export default function App\(\)|const App\s*=)/,
+              navigationSyncComponent + '\n$1',
+            );
+
+            // Add NavigationSync component inside BrowserRouter
+            content = content.replace(
+              /(<BrowserRouter[^>]*>)/,
+              '$1\n      <NavigationSync />',
+            );
+          }
+
           // Debug: Log if we made any changes
           if (content !== originalContent) {
-            console.log(`Fixed imports in ${part.path}:`, {
-              original: originalContent
-                .split('\n')
-                .filter((line) => line.includes('import')),
-              fixed: content
-                .split('\n')
-                .filter((line) => line.includes('import')),
-            });
+            console.log(
+              `Fixed imports and added navigation sync in ${part.path}`,
+            );
+            console.log(
+              'NavigationSync component should be injected. Content preview:',
+            );
+            console.log(content.substring(0, 500) + '...');
           }
         }
 
@@ -911,13 +1419,63 @@ export default function App() {
       put(
         map,
         '/__preview__/App.jsx',
-        `import React from 'react';
-import { BrowserRouter, Routes, Route } from 'react-router-dom';
+        `import React, { useEffect } from 'react';
+import { BrowserRouter, Routes, Route, useNavigate, useLocation } from 'react-router-dom';
 ${importsPages}
+
+function NavigationSync() {
+  const navigate = useNavigate();
+  const location = useLocation();
+
+  useEffect(() => {
+    console.log('[NavigationSync] Component mounted, current route:', location.pathname);
+    
+    // Listen for navigation messages from parent
+    const handleMessage = (event) => {
+      console.log('[NavigationSync] Received message:', event.data);
+      
+      if (event.data?.type === 'NAVIGATE_TO_ROUTE' && event.data?.route) {
+        console.log('[NavigationSync] Navigating to:', event.data.route);
+        navigate(event.data.route);
+      }
+    };
+
+    window.addEventListener('message', handleMessage);
+    
+    // Notify parent that we're ready to receive messages
+    if (window.parent !== window) {
+      window.parent.postMessage({
+        type: 'NAVIGATION_SYNC_READY',
+        route: location.pathname
+      }, '*');
+    }
+    
+    return () => window.removeEventListener('message', handleMessage);
+  }, [navigate]);
+
+  useEffect(() => {
+    console.log('[NavigationSync] Route changed to:', location.pathname);
+    
+    // Notify parent of route changes with a small delay to ensure navigation is complete
+    if (window.parent !== window) {
+      setTimeout(() => {
+        console.log('[NavigationSync] Notifying parent of route change:', location.pathname);
+        window.parent.postMessage({
+          type: 'ROUTE_CHANGED',
+          route: location.pathname,
+          source: 'sandpack-preview'
+        }, '*');
+      }, 50);
+    }
+  }, [location.pathname]);
+
+  return null;
+}
 
 export default function App(){
   return (
     <BrowserRouter>
+      <NavigationSync />
       <main>
         <Routes>
 ${routes}
@@ -1022,6 +1580,16 @@ ${routes}
     [props],
   );
 
+  const handleSandpackRouteChange = useCallback(
+    (route: string) => {
+      if (route !== selectedRoute) {
+        setInternalRoute(route);
+        props.onPageChange?.(route);
+      }
+    },
+    [selectedRoute, props],
+  );
+
   const handleDeviceChange = useCallback(
     (device: string) => {
       props.onDeviceChange?.(device);
@@ -1061,85 +1629,184 @@ ${routes}
       }}
     >
       {/* Header */}
-      <Stack
-        direction="row"
-        alignItems="center"
-        justifyContent="space-between"
-        sx={{
-          p: 1.5,
-          borderBottom: '1px solid',
-          borderColor: 'rgba(255,255,255,0.08)',
-        }}
-      >
-        <Stack direction="row" alignItems="center" spacing={1.5}>
-          <IconButton
-            size="small"
-            onClick={props.onRefresh}
-            sx={{
-              color: 'text.secondary',
-              '&:hover': { bgcolor: 'rgba(255,255,255,0.08)' },
-            }}
-          >
-            <Iconify icon="basil:refresh-outline" />
-          </IconButton>
-          <Typography
-            variant="body2"
-            sx={{
-              color: 'text.secondary',
-              fontFamily: 'monospace',
-              fontSize: '0.75rem',
-            }}
-          >
-            DB(projects → {String(codeField)}) · files:{filesCount} · src:
-            {srcLabel} · pages:{dbPages.length}
-          </Typography>
-          {projectId && (
-            <Chip
+      {props.currentView === 'main' && (
+        <Stack
+          direction="row"
+          alignItems="center"
+          justifyContent="space-between"
+          sx={{
+            p: 1.5,
+            borderBottom: '1px solid',
+            borderColor: 'rgba(255,255,255,0.08)',
+          }}
+        >
+          <Stack direction="row" alignItems="center" spacing={1.5}>
+            <IconButton
               size="small"
-              sx={{ ml: 1 }}
-              label={`project:${projectId.slice(0, 8)}`}
-            />
-          )}
+              onClick={props.onRefresh}
+              sx={{
+                color: 'text.secondary',
+                '&:hover': { bgcolor: 'rgba(255,255,255,0.08)' },
+              }}
+            >
+              <Iconify icon="basil:refresh-outline" />
+            </IconButton>
+            <Typography
+              variant="body2"
+              sx={{
+                color: 'text.secondary',
+                fontFamily: 'monospace',
+                fontSize: '0.75rem',
+              }}
+            >
+              DB(projects → {String(codeField)}) · files:{filesCount} · src:
+              {srcLabel} · pages:{dbPages.length}
+            </Typography>
+            {projectId && (
+              <Chip
+                size="small"
+                sx={{ ml: 1 }}
+                label={`project:${projectId.slice(0, 8)}`}
+              />
+            )}
+          </Stack>
+          <Stack direction="row" spacing={1}>
+            <IconButton
+              size="small"
+              onClick={() => switchView('preview')}
+              sx={{
+                borderRadius: 1,
+                color:
+                  viewMode === 'preview' ? 'text.primary' : 'text.secondary',
+                bgcolor:
+                  viewMode === 'preview'
+                    ? 'rgba(255,255,255,0.1)'
+                    : 'transparent',
+              }}
+            >
+              <Iconify icon="iconamoon:eye" />
+            </IconButton>
+            <IconButton
+              size="small"
+              onClick={() => switchView('code')}
+              sx={{
+                borderRadius: 1,
+                color: viewMode === 'code' ? 'text.primary' : 'text.secondary',
+                bgcolor:
+                  viewMode === 'code' ? 'rgba(76,175,80,0.1)' : 'transparent',
+              }}
+            >
+              <Iconify icon="mynaui:code" />
+            </IconButton>
+            <Tooltip title={props.isDownloading ? "Preparing download..." : "Download project as ZIP"}>
+              <IconButton
+                size="small"
+                onClick={props.onDownload}
+                disabled={props.isDownloading}
+                sx={{ 
+                  borderRadius: 1, 
+                  color: props.isDownloading ? 'action.disabled' : 'text.secondary',
+                  '&:hover': { 
+                    bgcolor: 'rgba(76,175,80,0.1)',
+                    color: 'success.main'
+                  },
+                  '&.Mui-disabled': {
+                    color: 'action.disabled'
+                  }
+                }}
+              >
+                {props.isDownloading ? (
+                  <CircularProgress size={16} sx={{ color: 'inherit' }} />
+                ) : (
+                  <Iconify icon="mage:download" />
+                )}
+              </IconButton>
+            </Tooltip>
+            {!props.isGitHubConnected ? (
+              <Tooltip title="Connect to GitHub">
+                <IconButton
+                  size="small"
+                  onClick={props.onGitHubConnect}
+                  sx={{ 
+                    borderRadius: 1, 
+                    color: 'text.secondary',
+                    '&:hover': { 
+                      bgcolor: 'rgba(33,150,243,0.1)',
+                      color: 'primary.main'
+                    }
+                  }}
+                >
+                  <Iconify icon="mdi:github" />
+                </IconButton>
+              </Tooltip>
+            ) : (
+              <Stack direction="row" spacing={0.5}>
+                <Tooltip title={
+                  props.isPushingToGitHub 
+                    ? "Pushing to GitHub..." 
+                    : `Push to GitHub${props.gitHubAccount ? ` (${props.gitHubAccount})` : ''}`
+                }>
+                  <IconButton
+                    size="small"
+                    onClick={props.onGitHubPush}
+                    disabled={props.isPushingToGitHub}
+                    sx={{ 
+                      borderRadius: 1, 
+                      color: props.isPushingToGitHub ? 'action.disabled' : 'success.main',
+                      '&:hover': { 
+                        bgcolor: 'rgba(76,175,80,0.1)',
+                        color: 'success.dark'
+                      },
+                      '&.Mui-disabled': {
+                        color: 'action.disabled'
+                      }
+                    }}
+                  >
+                    {props.isPushingToGitHub ? (
+                      <CircularProgress size={16} sx={{ color: 'inherit' }} />
+                    ) : (
+                      <Iconify icon="mdi:github" />
+                    )}
+                  </IconButton>
+                </Tooltip>
+                <Tooltip title="GitHub options">
+                  <IconButton
+                    size="small"
+                    onClick={(event) => setGithubMenuAnchor(event.currentTarget)}
+                    sx={{ 
+                      borderRadius: 1, 
+                      color: 'success.main',
+                      '&:hover': { 
+                        bgcolor: 'rgba(76,175,80,0.1)',
+                        color: 'success.dark'
+                      }
+                    }}
+                  >
+                    <Iconify icon="mdi:chevron-down" />
+                  </IconButton>
+                </Tooltip>
+                <Menu
+                  anchorEl={githubMenuAnchor}
+                  open={Boolean(githubMenuAnchor)}
+                  onClose={() => setGithubMenuAnchor(null)}
+                  transformOrigin={{ horizontal: 'right', vertical: 'top' }}
+                  anchorOrigin={{ horizontal: 'right', vertical: 'bottom' }}
+                >
+                  <MenuItem onClick={() => { setGithubMenuAnchor(null); props.onGitHubDisconnect?.(); }}>
+                    <ListItemIcon>
+                      <Iconify icon="mdi:logout" />
+                    </ListItemIcon>
+                    <ListItemText>Disconnect GitHub</ListItemText>
+                  </MenuItem>
+                </Menu>
+              </Stack>
+            )}
+          </Stack>
         </Stack>
-        <Stack direction="row" spacing={1}>
-          <IconButton
-            size="small"
-            onClick={() => switchView('preview')}
-            sx={{
-              borderRadius: 1,
-              color: viewMode === 'preview' ? 'text.primary' : 'text.secondary',
-              bgcolor:
-                viewMode === 'preview'
-                  ? 'rgba(255,255,255,0.1)'
-                  : 'transparent',
-            }}
-          >
-            <Iconify icon="iconamoon:eye" />
-          </IconButton>
-          <IconButton
-            size="small"
-            onClick={() => switchView('code')}
-            sx={{
-              borderRadius: 1,
-              color: viewMode === 'code' ? 'text.primary' : 'text.secondary',
-              bgcolor:
-                viewMode === 'code' ? 'rgba(76,175,80,0.1)' : 'transparent',
-            }}
-          >
-            <Iconify icon="mynaui:code" />
-          </IconButton>
-          <IconButton
-            size="small"
-            onClick={props.onDownload}
-            sx={{ borderRadius: 1, color: 'text.secondary' }}
-          >
-            <Iconify icon="mage:download" />
-          </IconButton>
-        </Stack>
-      </Stack>
+      )}
 
       {/* Controls */}
-      {(viewMode === 'preview' || props.currentView === 'erd') && (
+      {props.currentView === 'main' && (
         <Stack
           direction="row"
           alignItems="center"
@@ -1199,11 +1866,7 @@ ${routes}
                 '&:hover': { bgcolor: 'rgba(255,255,255,0.1)' },
               }}
             >
-              {props.currentView === 'erd' ||
-              props.currentView === 'frontend' ||
-              props.currentView === 'backend'
-                ? 'Main'
-                : 'Map'}
+              {props.currentView === 'main' ? 'Main' : 'Map'}
             </Button>
 
             <IconButton
@@ -1309,8 +1972,78 @@ ${routes}
           display: 'flex',
           flexDirection: 'column',
           overflowY: 'auto',
+          position: 'relative',
         }}
       >
+        {/* Loading Overlay */}
+        {(props.isMessageLoading || props.isCodeGenerating) && (
+          <Backdrop
+            open={true}
+            sx={{
+              position: 'absolute',
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              bgcolor: 'rgba(0, 0, 0, 0.8)',
+              zIndex: 9999,
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              justifyContent: 'center',
+              backdropFilter: 'blur(4px)',
+            }}
+          >
+            {props.isCodeGenerating ? (
+              <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
+                <Iconify 
+                  icon="vscode-icons:file-type-js-official" 
+                  sx={{ fontSize: 40, mr: 2, color: 'warning.main' }} 
+                />
+                <CircularProgress
+                  size={60}
+                  sx={{
+                    color: 'warning.main',
+                  }}
+                />
+              </Box>
+            ) : (
+              <CircularProgress
+                size={60}
+                sx={{
+                  color: 'primary.main',
+                  mb: 2,
+                }}
+              />
+            )}
+            <Typography
+              variant="h6"
+              sx={{
+                color: 'white',
+                mb: 1,
+                textAlign: 'center',
+              }}
+            >
+              {props.isCodeGenerating 
+                ? 'Generating code...'
+                : 'Generating your project...'
+              }
+            </Typography>
+            <Typography
+              variant="body2"
+              sx={{
+                color: 'rgba(255, 255, 255, 0.7)',
+                textAlign: 'center',
+                maxWidth: 300,
+              }}
+            >
+              {props.isCodeGenerating 
+                ? 'Please wait while ZakiCode generates the complete source code for your application.'
+                : 'Please wait while ZakiCode creates your application structure and code.'
+              }
+            </Typography>
+          </Backdrop>
+        )}
         {viewMode === 'code' ? (
           <CodeView
             key={`code-${selectedRoute || 'none'}`}
@@ -1452,14 +2185,14 @@ export default function App() {
                   >
                     <Box
                       sx={{
-                        width: frameWidth / scale,
+                        // width: frameWidth / scale,
                         transform: `scale(${scale})`,
                         transformOrigin: 'top left',
                         height: `calc(${1 / scale} * 100%)`,
                       }}
                     >
                       <SandpackProvider
-                        key={`sp-${filesCount}-${selectedRoute}-${sp.fp}`}
+                        key={`sp-${filesCount}-${sp.fp}`}
                         template={sp.template}
                         files={sp.filesMap}
                         customSetup={{
@@ -1476,9 +2209,9 @@ export default function App() {
                         }}
                       >
                         <SandpackLayout style={{ height: '70vh' }}>
-                          <SandpackPreview
-                            style={{ height: '100%', border: 0 }}
-                            showOpenInCodeSandbox={false}
+                          <SynchronizedPreview
+                            selectedRoute={selectedRoute}
+                            onRouteChange={handleSandpackRouteChange}
                           />
                         </SandpackLayout>
                         <SandpackConsole showHeader showSyntaxError />

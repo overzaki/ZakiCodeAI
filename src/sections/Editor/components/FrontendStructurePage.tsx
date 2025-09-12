@@ -6,7 +6,7 @@ import React, {
   useEffect,
   useState,
 } from 'react';
-import { Box, Button, Stack, Typography, Chip, Alert } from '@mui/material';
+import { Box, Button, Stack, Typography, Chip, Alert, CircularProgress, Backdrop } from '@mui/material';
 import {
   useNodesState,
   useEdgesState,
@@ -326,6 +326,8 @@ export default function FrontendStructurePage({
         __id: r.id,
       }));
 
+      console.log('FrontendStructurePage: Loaded pages from DB:', pages);
+      
       setPagesFromDB(pages);
       dispatch(updateFrontendPages(pages));
 
@@ -389,7 +391,11 @@ export default function FrontendStructurePage({
 
   /* ───────── Event Handlers ───────── */
   const handlePageAdded = useCallback(() => {
-    setTimeout(() => loadPagesFromDB(), 500);
+    console.log('FrontendStructurePage: handlePageAdded called');
+    setTimeout(() => {
+      console.log('FrontendStructurePage: Reloading pages from DB after add');
+      loadPagesFromDB();
+    }, 500);
   }, [loadPagesFromDB]);
 
   const handleEditPage = useCallback((pageName: string) => {
@@ -419,7 +425,11 @@ export default function FrontendStructurePage({
   );
 
   const handlePageEdited = useCallback(() => {
-    setTimeout(() => loadPagesFromDB(), 500);
+    console.log('FrontendStructurePage: handlePageEdited called');
+    setTimeout(() => {
+      console.log('FrontendStructurePage: Reloading pages from DB after edit');
+      loadPagesFromDB();
+    }, 500);
   }, [loadPagesFromDB]);
 
   const handleGenerateCode = async () => {
@@ -435,6 +445,9 @@ export default function FrontendStructurePage({
       return;
     }
 
+    console.log('FrontendStructurePage: Starting code generation...');
+    console.log('FrontendStructurePage: isGeneratingCode before:', isGeneratingCode);
+
     try {
       const pages = pagesFromDB.map((p) => ({
         pageName: p.pageName,
@@ -444,6 +457,9 @@ export default function FrontendStructurePage({
       }));
 
       const result = await generateCode(projectToUse, pages, true);
+
+      console.log('FrontendStructurePage: Code generation completed:', result);
+      console.log('FrontendStructurePage: isGeneratingCode after:', isGeneratingCode);
 
       if (result.success && result.data) {
         dispatch(
@@ -485,9 +501,109 @@ export default function FrontendStructurePage({
 
   // تحويل Set إلى Array لتجنب مشاكل TypeScript
 
+  // Show full page loading state
+  if (loadingPages) {
+    return (
+      <Box sx={{ p: 3, height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <Stack spacing={3} alignItems="center">
+          <CircularProgress size={40} />
+          <Typography variant="h6" sx={{ color: 'text.secondary' }}>
+            Loading frontend structure...
+          </Typography>
+          {activeProjectId && (
+            <Typography variant="body2" sx={{ color: 'text.secondary' }}>
+              Project: {activeProjectId.slice(0, 8)}...
+            </Typography>
+          )}
+        </Stack>
+      </Box>
+    );
+  }
+
   return (
     <>
-      <Box sx={{ height: '100%', overflow: 'auto', p: 2 }}>
+      <Box sx={{ height: '100%', overflow: 'auto', p: 2, position: 'relative' }}>
+        {/* Code Generation Loading Overlay */}
+        {isGeneratingCode && (
+          <Backdrop
+            open={true}
+            sx={{
+              position: 'absolute',
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              bgcolor: 'rgba(0, 0, 0, 0.8)',
+              zIndex: 9999,
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              justifyContent: 'center',
+              backdropFilter: 'blur(4px)',
+            }}
+          >
+            <Box sx={{ display: 'flex', alignItems: 'center', mb: 3 }}>
+              <Iconify 
+                icon="vscode-icons:file-type-js-official" 
+                sx={{ fontSize: 50, mr: 2, color: 'warning.main' }} 
+              />
+              <CircularProgress
+                size={70}
+                thickness={4}
+                sx={{
+                  color: 'warning.main',
+                }}
+              />
+            </Box>
+            <Typography
+              variant="h6"
+              sx={{
+                color: 'white',
+                mb: 1,
+                textAlign: 'center',
+              }}
+            >
+              Generating code...
+            </Typography>
+            <Typography
+              variant="body2"
+              sx={{
+                color: 'rgba(255, 255, 255, 0.7)',
+                textAlign: 'center',
+                maxWidth: 400,
+              }}
+            >
+              Please wait while ZakiCode generates the complete source code for your application based on the current page structure.
+            </Typography>
+            
+            {/* Progress Steps */}
+            <Box sx={{ mt: 3, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+              <Typography variant="caption" sx={{ color: 'rgba(255, 255, 255, 0.5)', mb: 1 }}>
+                Current step: Analyzing page structure
+              </Typography>
+              <Box sx={{ display: 'flex', gap: 1 }}>
+                {[1, 2, 3, 4].map((step) => (
+                  <Box
+                    key={step}
+                    sx={{
+                      width: 8,
+                      height: 8,
+                      borderRadius: '50%',
+                      bgcolor: step <= 2 ? 'warning.main' : 'rgba(255, 255, 255, 0.3)',
+                      animation: step === 2 ? 'pulse 1.5s infinite' : 'none',
+                      '@keyframes pulse': {
+                        '0%': { opacity: 1 },
+                        '50%': { opacity: 0.5 },
+                        '100%': { opacity: 1 },
+                      },
+                    }}
+                  />
+                ))}
+              </Box>
+            </Box>
+          </Backdrop>
+        )}
+
         {/* تنبيه إذا لم يكن هناك مشروع محدد */}
         {!activeProjectId && (
           <Alert severity="warning" sx={{ mb: 2 }}>
@@ -504,22 +620,14 @@ export default function FrontendStructurePage({
           sx={{ mb: 2 }}
         >
           <Stack direction="row" alignItems="center" spacing={1}>
-            <Iconify
+            {/* <Iconify
               icon={themeDirection === 'rtl' ? 'mingcute:arrow-right-fill' : 'mingcute:arrow-left-fill'}
               onClick={onBackToERD}
               sx={{ cursor: 'pointer', fontSize: 24 }}
-            />
+            /> */}
             <Typography variant="h5" fontWeight="bold">
               {t('title')}
             </Typography>
-            {loadingPages && (
-              <Chip 
-                size="small" 
-                label="Loading..." 
-                color="info"
-                sx={{ ml: 1 }} 
-              />
-            )}
           </Stack>
 
           <Stack direction="row" spacing={1}>

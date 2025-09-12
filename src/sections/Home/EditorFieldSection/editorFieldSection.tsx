@@ -2,7 +2,13 @@
 
 import React, { useState, useEffect } from 'react';
 import {
-  Box, TextField, IconButton, Button, Divider, alpha, Stack,
+  Box,
+  TextField,
+  IconButton,
+  Button,
+  Divider,
+  alpha,
+  Stack,
 } from '@mui/material';
 import { enqueueSnackbar } from 'notistack';
 import Iconify from '@/components/iconify';
@@ -11,6 +17,8 @@ import { useTranslations } from 'next-intl';
 import { useSettingsContext } from '@/components/settings';
 import { useRouter as useIntlRouter } from '@/i18n/routing';
 import { useEditor } from '@/redux/hooks/useEditor';
+import { useDispatch } from 'react-redux';
+import { setIsCreatingNewProject } from '@/redux/slices/editorSlice';
 
 // ✅ استخدم سينجلتون supabase
 import { getSupabaseClient } from '@/lib/supabaseClient';
@@ -21,8 +29,8 @@ const TABLE_NAME = 'projects';
 // ————— helpers —————
 function computePlatformFlags(selected: string[]) {
   const has = (k: string) => selected.includes(k);
-  const website = has('website') || has('dashboard');
-  const mobile  = has('mobile');
+  const website = has('website');
+  const mobile = has('mobile');
   const backend = has('backend') || has('api') || has('server');
   return { website, mobile, backend };
 }
@@ -31,8 +39,9 @@ const EditorFieldSection: React.FC = () => {
   const t = useTranslations();
   const { themeDirection } = useSettingsContext();
   const intlRouter = useIntlRouter();
-  const [isLoading, setIsLoading] = useState(false);
+  const dispatch = useDispatch();
 
+  const editor = useEditor();
   const {
     message,
     selectedCategories,
@@ -40,7 +49,7 @@ const EditorFieldSection: React.FC = () => {
     setSelectedCategories,
     addCategory,
     removeCategory,
-  } = useEditor();
+  } = editor;
 
   const [showSelectionBar, setShowSelectionBar] = useState(false);
 
@@ -87,7 +96,8 @@ const EditorFieldSection: React.FC = () => {
       .select('id')
       .single();
 
-    if (e2 || !created || !('id' in created)) throw e2 || new Error('Failed to create workspace');
+    if (e2 || !created || !('id' in created))
+      throw e2 || new Error('Failed to create workspace');
 
     const wid = (created as { id: string }).id;
 
@@ -100,65 +110,29 @@ const EditorFieldSection: React.FC = () => {
   }
 
   const slugify = (s: string) =>
-    s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
-  
+    s
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '');
 
-
-  const handleSend = async () => {
+  const handleSend = () => {
     if (selectedCategories.length === 0) {
-      enqueueSnackbar(t('Please select at least one category before proceeding'), {
-        variant: 'warning',
-        autoHideDuration: 4000,
-      });
+      enqueueSnackbar(
+        t('Please select at least one category before proceeding'),
+        {
+          variant: 'warning',
+          autoHideDuration: 4000,
+        },
+      );
       return;
     }
     if (!message.trim()) return;
-  
-    setIsLoading(true);
-    try {
-      // platform من اختيار المستخدم
-      const selected =
-        selectedCategories.includes('website') ? 'website' :
-        selectedCategories.includes('mobile')  ? 'mobile'  :
-        selectedCategories.includes('backend') ? 'backend' : 'website';
-  
-      const name = message.trim().split('\n')[0].slice(0, 64) || 'Untitled';
-  
-      const resp = await fetch('/api/chat/send', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          action: 'init',
-          autoErd: true,       // 👈 ينشئ المشروع ويولّد ERD فوراً
-          platform: selected,  // website | mobile | backend
-          project_name: name,
-          slug_hint: slugify(name),
-          prompt: message,     // برومبت ERD مباشرة
-        }),
-      });
-  
-      const data = await resp.json();
-      if (!resp.ok) {
-        enqueueSnackbar(data?.error || t('Something went wrong'), { variant: 'error' });
-        return;
-      }
-  
-      // نستخرج projectId من الرد
-      const projectId = data?.projectId || data?.erd?.projectId;
-      if (!projectId) {
-        enqueueSnackbar(t('Missing projectId in response'), { variant: 'error' });
-        return;
-      }
-  
-      enqueueSnackbar(t('Project created and ERD generated'), { variant: 'success' });
-      // انتقل للإيديتور
-      // استخدم ما يناسبك: useRouter من next/navigation أو intlRouter
-      intlRouter.push({ pathname: '/editor', query: { projectId } });
-    } catch (e: any) {
-      enqueueSnackbar(e?.message || t('Something went wrong'), { variant: 'error' });
-    } finally {
-      setIsLoading(false);
-    }
+
+    // Set flag to indicate we're creating a new project
+    dispatch(setIsCreatingNewProject(true));
+
+    // Navigate to editor page - the editor will handle the API call
+    intlRouter.push({ pathname: '/editor' });
   };
 
   const handleKeyPress = (event: React.KeyboardEvent) => {
@@ -208,22 +182,26 @@ const EditorFieldSection: React.FC = () => {
             }
           >
             {selectedCategories.includes('website') ? (
-              <Box sx={{ display: 'inline', lineHeight: '1' }}>{t('Website')}</Box>
+              <Box sx={{ display: 'inline', lineHeight: '1' }}>
+                {t('Website')}
+              </Box>
             ) : (
               <ColorizedLabel label={t('Website')} />
             )}
           </Button>
 
           <Button
-            className={selectedCategories.includes('dashboard') ? 'active' : ''}
+            className={selectedCategories.includes('backend') ? 'active' : ''}
             onClick={() =>
-              selectedCategories.includes('dashboard')
-                ? removeCategory('dashboard')
-                : addCategory('dashboard')
+              selectedCategories.includes('backend')
+                ? removeCategory('backend')
+                : addCategory('backend')
             }
           >
-            {selectedCategories.includes('dashboard') ? (
-              <Box sx={{ display: 'inline', lineHeight: '1' }}>{t('Dashboard')}</Box>
+            {selectedCategories.includes('backend') ? (
+              <Box sx={{ display: 'inline', lineHeight: '1' }}>
+                {t('Dashboard')}
+              </Box>
             ) : (
               <ColorizedLabel label={t('Dashboard')} />
             )}
@@ -238,7 +216,9 @@ const EditorFieldSection: React.FC = () => {
             }
           >
             {selectedCategories.includes('mobile') ? (
-              <Box sx={{ display: 'inline', lineHeight: '1' }}>{t('Mobile App')}</Box>
+              <Box sx={{ display: 'inline', lineHeight: '1' }}>
+                {t('Mobile App')}
+              </Box>
             ) : (
               <ColorizedLabel label={t('Mobile App')} />
             )}
@@ -247,10 +227,16 @@ const EditorFieldSection: React.FC = () => {
       </Box>
 
       {/* Animated Border Container */}
-      <Box className="animate-border-color" sx={{ position: 'relative', p: '2px' }}>
+      <Box
+        className="animate-border-color"
+        sx={{ position: 'relative', p: '2px' }}
+      >
         <Box
           className="inner-content"
-          sx={{ border: '1px solid', borderColor: (theme) => alpha(theme.palette.primary.main, 0.3) }}
+          sx={{
+            border: '1px solid',
+            borderColor: (theme) => alpha(theme.palette.primary.main, 0.3),
+          }}
         >
           {/* Selected Categories */}
           <Box
@@ -259,7 +245,9 @@ const EditorFieldSection: React.FC = () => {
               transition: 'all 0.3s ease-in-out',
               maxHeight: showSelectionBar ? '60px' : '0px',
               opacity: showSelectionBar ? 1 : 0,
-              transform: showSelectionBar ? 'translateY(0)' : 'translateY(-10px)',
+              transform: showSelectionBar
+                ? 'translateY(0)'
+                : 'translateY(-10px)',
             }}
           >
             <Stack
@@ -278,23 +266,36 @@ const EditorFieldSection: React.FC = () => {
               }}
             >
               <IconButton onClick={() => setSelectedCategories([])}>
-                <Iconify icon={themeDirection === 'ltr' ? 'line-md:arrow-left' : 'line-md:arrow-right'} />
+                <Iconify
+                  icon={
+                    themeDirection === 'ltr'
+                      ? 'line-md:arrow-left'
+                      : 'line-md:arrow-right'
+                  }
+                />
               </IconButton>
               {selectedCategories.length === 1
                 ? selectedCategories[0] === 'website'
                   ? t('Website')
-                  : selectedCategories[0] === 'dashboard'
-                  ? t('Dashboard')
-                  : t('Mobile App')
+                  : selectedCategories[0] === 'backend'
+                    ? t('Dashboard')
+                    : t('Mobile App')
                 : selectedCategories.length > 1
-                ? t('Multiple Selected')
-                : ''}
+                  ? t('Multiple Selected')
+                  : ''}
             </Stack>
           </Box>
 
           {/* Main Text Input Area */}
           <Box sx={{ p: 2 }}>
-            <Box sx={{ flex: 1, display: 'flex', alignItems: 'flex-start', gap: 1 }}>
+            <Box
+              sx={{
+                flex: 1,
+                display: 'flex',
+                alignItems: 'flex-start',
+                gap: 1,
+              }}
+            >
               <TextField
                 multiline
                 minRows={6}
@@ -312,35 +313,64 @@ const EditorFieldSection: React.FC = () => {
                     p: 2,
                     '&:before': { borderBottom: 'none' },
                     '&:after': { borderBottom: 'none' },
-                    '&:hover:not(.Mui-disabled):before': { borderBottom: 'none' },
+                    '&:hover:not(.Mui-disabled):before': {
+                      borderBottom: 'none',
+                    },
                   },
-                  '& ::placeholder': { color: (theme) => `${alpha(theme.palette.text.primary, 0.64)} !important` },
+                  '& ::placeholder': {
+                    color: (theme) =>
+                      `${alpha(theme.palette.text.primary, 0.64)} !important`,
+                  },
                 }}
               />
               <IconButton
                 onClick={handleSend}
-                disabled={!message.trim() || isLoading}
+                disabled={!message.trim()}
                 sx={{
                   backgroundColor: message.trim() ? '#E0E0E0' : '#424242',
                   color: '#424242',
-                  width: 30, height: 30, mt: 0.5,
-                  '&:hover': { backgroundColor: message.trim() ? '#FFFFFF' : '#424242' },
+                  width: 30,
+                  height: 30,
+                  mt: 0.5,
+                  '&:hover': {
+                    backgroundColor: message.trim() ? '#FFFFFF' : '#424242',
+                  },
                   '&.Mui-disabled': { backgroundColor: '#777777' },
                 }}
               >
-                <Iconify icon={isLoading ? 'line-md:loading-twotone-loop' : 'fa6-solid:arrow-up'} />
+                <Iconify icon="fa6-solid:arrow-up" />
               </IconButton>
             </Box>
 
             {/* Bottom Control Bar */}
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 2, pt: 1 }}>
-              <IconButton size="small" sx={{ color: 'text.secondary', '&:hover': { backgroundColor: 'rgba(255, 255, 255, 0.1)' } }}>
+            <Box
+              sx={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 1,
+                mt: 2,
+                pt: 1,
+              }}
+            >
+              <IconButton
+                size="small"
+                sx={{
+                  color: 'text.secondary',
+                  '&:hover': { backgroundColor: 'rgba(255, 255, 255, 0.1)' },
+                }}
+              >
                 <Iconify icon="eva:settings-outline" />
               </IconButton>
 
               <Divider orientation="vertical" flexItem sx={{ mx: 0.5 }} />
 
-              <IconButton size="small" sx={{ color: 'text.secondary', '&:hover': { backgroundColor: 'rgba(255, 255, 255, 0.1)' } }}>
+              <IconButton
+                size="small"
+                sx={{
+                  color: 'text.secondary',
+                  '&:hover': { backgroundColor: 'rgba(255, 255, 255, 0.1)' },
+                }}
+              >
                 <Iconify icon="eva:plus-outline" />
               </IconButton>
 
@@ -357,7 +387,8 @@ const EditorFieldSection: React.FC = () => {
                   fontWeight: 600,
                   '&:hover': {
                     color: (theme) => alpha(theme.palette.text.secondary, 0.8),
-                    backgroundColor: (theme) => alpha(theme.palette.action.disabledBackground, 0.1),
+                    backgroundColor: (theme) =>
+                      alpha(theme.palette.action.disabledBackground, 0.1),
                   },
                 }}
               >

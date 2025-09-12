@@ -11,6 +11,7 @@ import { RootState } from '@/redux/store/store';
 import { addFrontendPage } from '@/redux/slices/editorSlice';
 import Iconify from '@/components/iconify';
 import { supabase } from '@/lib/supabaseClient';
+import { enqueueSnackbar } from 'notistack';
 
 interface AddPageDialog {
   open: boolean;
@@ -71,15 +72,30 @@ export default function AddPageDialog({
         position,
       };
 
+      console.log('AddPageDialog: Inserting payload:', payload);
+      
       const { data, error } = await supabase
         .from('project_pages')
         .upsert(payload, { onConflict: 'project_id,page_name' })
         .select()
         .single();
 
-      if (error) throw error;
+      console.log('AddPageDialog: Upsert result:', { data, error });
+      
+      if (error) {
+        console.error('AddPageDialog: Supabase error:', error);
+        throw error;
+      }
 
       // بعد نجاح DB: حدّث الواجهة (Redux) — إبقِ الحقول كما كنت تعمل
+      console.log('AddPageDialog: Adding to Redux:', {
+        pageName: payload.page_name,
+        optionalDescription: payload.description || '',
+        parentPage: payload.parent_page,
+        pageType: payload.page_type,
+        platform: payload.platform,
+      });
+      
       dispatch(
         addFrontendPage({
           pageName: payload.page_name,
@@ -91,6 +107,8 @@ export default function AddPageDialog({
           // id: data?.id,
         }),
       );
+      
+      console.log('AddPageDialog: Redux action dispatched');
 
       // حفظ سريع للـlocalStorage (كما عندك)
       setTimeout(() => {
@@ -108,6 +126,11 @@ export default function AddPageDialog({
 
       // حدّث مخطط الـERD (استدعاء الدالة اللي بترسمه)
       onPageAdded?.();
+
+      // Show success message
+      enqueueSnackbar(`Page "${payload.page_name}" added successfully!`, { 
+        variant: 'success' 
+      });
 
       // تصفير النموذج وإغلاق
       setFormData({

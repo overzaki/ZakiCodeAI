@@ -78,19 +78,27 @@ export default function EditPageDialog({
         updated_at: new Date().toISOString(),
       };
 
-      // جرّب UPDATE أولاً
-      const { data: updated, error: updErr } = await supabase
-        .from('project_pages')
-        .update(payload)
-        .eq('project_id', projectId)
-        .eq('page_name', originalName)
-        .select('id');
-
-      if (updErr) throw updErr;
-
-      // لو ما فيه سجل، INSERT
-      if (!updated || updated.length === 0) {
-        // ⚠️ position غير موجود في النوع، فنحسبه بفهرس الصفحة أو 0
+      console.log('EditPageDialog: Updating with payload:', payload);
+      console.log('EditPageDialog: Project ID:', projectId);
+      console.log('EditPageDialog: Original name:', originalName);
+      
+      // If the page name changed, we need to use a different approach
+      if (formData.pageName.trim() !== originalName) {
+        console.log('EditPageDialog: Page name changed, need to delete old and insert new');
+        
+        // Delete the old record
+        const { error: deleteErr } = await supabase
+          .from('project_pages')
+          .delete()
+          .eq('project_id', projectId)
+          .eq('page_name', originalName);
+          
+        if (deleteErr) {
+          console.error('EditPageDialog: Delete error:', deleteErr);
+          throw deleteErr;
+        }
+        
+        // Insert the new record
         const guessedPosition =
           (frontendStructure?.pages?.findIndex((p) => p.pageName === originalName) ?? 0);
 
@@ -101,10 +109,63 @@ export default function EditPageDialog({
           created_at: new Date().toISOString(),
         };
 
+        console.log('EditPageDialog: Inserting new payload:', insertPayload);
+        
         const { error: insErr } = await supabase
           .from('project_pages')
           .insert(insertPayload);
-        if (insErr) throw insErr;
+          
+        console.log('EditPageDialog: Insert result:', { insErr });
+        
+        if (insErr) {
+          console.error('EditPageDialog: Insert error:', insErr);
+          throw insErr;
+        }
+      } else {
+        // Page name didn't change, just update
+        const { data: updated, error: updErr } = await supabase
+          .from('project_pages')
+          .update(payload)
+          .eq('project_id', projectId)
+          .eq('page_name', originalName)
+          .select('id');
+
+        console.log('EditPageDialog: Update result:', { updated, updErr });
+        
+        if (updErr) {
+          console.error('EditPageDialog: Update error:', updErr);
+          throw updErr;
+        }
+
+        // If no record was updated, insert a new one
+        if (!updated || updated.length === 0) {
+          console.log('EditPageDialog: No existing record found, inserting new one');
+          
+          const guessedPosition =
+            (frontendStructure?.pages?.findIndex((p) => p.pageName === originalName) ?? 0);
+
+          const insertPayload = {
+            ...payload,
+            project_id: projectId,
+            position: guessedPosition,
+            created_at: new Date().toISOString(),
+          };
+
+          console.log('EditPageDialog: Inserting payload:', insertPayload);
+          
+          const { error: insErr } = await supabase
+            .from('project_pages')
+            .insert(insertPayload);
+            
+          console.log('EditPageDialog: Insert result:', { insErr });
+          
+          if (insErr) {
+            console.error('EditPageDialog: Insert error:', insErr);
+            throw insErr;
+          }
+        } else {
+          console.log('EditPageDialog: Successfully updated existing record');
+        }
       }
 
       // حدث Redux
